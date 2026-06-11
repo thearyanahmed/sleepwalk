@@ -1,1 +1,20 @@
 /target
+
+# Secrets — never committed (see CLAUDE.local.md §secrets, ADR-005)
+.env
+*.env
+
+# Fetched artifacts (pinned + hashed in images/versions.toml, fetched by `just fetch`)
+/images/artifacts/
+
+# Snapshot dirs are RAM dumps — secret-bearing, 0700, never committed
+*.snap/
+/run/
+
+# Scratch results (only curated samples are committed under results/)
+/results/scratch/
+
+# Local dev-VM disk images / cloud-init seeds
+*.qcow2
+*.img
+seed.iso

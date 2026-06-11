@@ -1,0 +1,49 @@
+# sleepwalk — pinned artifact versions. THE source of truth for what runs.
+# Every result file embeds this file's hash; nothing is "latest", everything is
+# pinned + checksummed. `just fetch` downloads and verifies against the sha256
+# fields below.
+#
+# Bootstrap: a sha256 left empty is treated as UNPINNED. `just fetch` will
+# download it, print the observed hash, and refuse to call the artifact trusted
+# until you paste that hash back here. Never hand-write a hash you didn't compute.
+#
+# ⚠️ The version numbers below are PLACEHOLDERS pending verification against
+# primary sources (Firecracker GitHub releases + its CI kernel bucket). Do not
+# build on them until confirmed — see docs/environment.md / Unit 0.2.
+
+[meta]
+# arch is resolved at fetch time from the host; artifacts are stored arch-suffixed.
+schema = "1"
+
+[firecracker]
+# https://github.com/firecracker-microvm/firecracker/releases
+version = ""            # e.g. "v1.13.0" — VERIFY aarch64 snapshot/UFFD support in release notes
+sha256_aarch64 = ""
+sha256_x86_64  = ""
+
+[kernel]
+# Firecracker CI guest kernel. Pin the exact build, not a moving "latest".
+# Bucket: https://s3.amazonaws.com/spec.ccfc.min/  (see FC docs "getting started")
+version = ""            # e.g. "6.1" series CI build id
+url_aarch64 = ""
+url_x86_64  = ""
+sha256_aarch64 = ""
+sha256_x86_64  = ""
+
+[rootfs]
+# Minimal busybox/alpine ext4 for the synthetic profile (built locally, Unit 0.4).
+# Pinned by content hash once built; the build recipe is the source, this is the lock.
+sha256_aarch64 = ""
+sha256_x86_64  = ""
+
+[dev_vm]
+# Ubuntu cloud image for the M1/M2 TCG dev VM (path A'). Host-side only.
+# https://cloud-images.ubuntu.com/releases/24.04/
+ubuntu_release = "24.04"
+ubuntu_img_aarch64 = ""   # e.g. ".../release/ubuntu-24.04-server-cloudimg-arm64.img"
+ubuntu_img_x86_64  = ""
+sha256_aarch64 = ""
+sha256_x86_64  = ""
+
+[toolchain]
+rust = "1.95.0"           # mirrors rust-toolchain.toml
