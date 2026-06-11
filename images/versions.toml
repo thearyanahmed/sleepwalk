@@ -7,9 +7,13 @@
 # download it, print the observed hash, and refuse to call the artifact trusted
 # until you paste that hash back here. Never hand-write a hash you didn't compute.
 #
-# ⚠️ The version numbers below are PLACEHOLDERS pending verification against
-# primary sources (Firecracker GitHub releases + its CI kernel bucket). Do not
-# build on them until confirmed — see docs/environment.md / Unit 0.2.
+# Firecracker + kernel verified against primary sources 2026-06-11 (Unit 0.2):
+#   - FC v1.16.0 is the latest stable (released 2026-06-04); aarch64 snapshot +
+#     UFFD restore are production-ready per docs/snapshotting/snapshot-support.md
+#     (GICv2 & GICv3; no cross-GIC-version restore — see ADR-004 CPU homogeneity).
+#   - Guest kernel pinned from the FC CI bucket v1.15 series (v1.16 CI artifacts
+#     not yet published one week post-release); 6.1.155 LTS for both arches.
+# rootfs + dev_vm hashes remain unpinned until their units (0.4 / 0.3) build them.
 
 [meta]
 # arch is resolved at fetch time from the host; artifacts are stored arch-suffixed.
@@ -17,18 +21,21 @@ schema = "1"
 
 [firecracker]
 # https://github.com/firecracker-microvm/firecracker/releases
-version = ""            # e.g. "v1.13.0" — VERIFY aarch64 snapshot/UFFD support in release notes
-sha256_aarch64 = ""
-sha256_x86_64  = ""
+# sha256 = the published .tgz release-asset digest (GitHub API .assets[].digest).
+version = "v1.16.0"
+sha256_aarch64 = "531c713cdbc37d4b8bc2533d851aabc0267096afa1768086a37672abb668efd7"
+sha256_x86_64  = "bd04e26952d4e158085778c6230a0b383d2619c319182e27eaa9d61a212e92d6"
 
 [kernel]
-# Firecracker CI guest kernel. Pin the exact build, not a moving "latest".
-# Bucket: https://s3.amazonaws.com/spec.ccfc.min/  (see FC docs "getting started")
-version = ""            # e.g. "6.1" series CI build id
-url_aarch64 = ""
-url_x86_64  = ""
-sha256_aarch64 = ""
-sha256_x86_64  = ""
+# Firecracker CI guest kernel. Pinned to an exact build, not a moving "latest".
+# Bucket: https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/<CI_VERSION>/<arch>/
+# CI_VERSION = release version minus patch (v1.16.0 -> v1.16); FC's CI had not yet
+# published the v1.16 tree on 2026-06-11, so we pin from the v1.15 series.
+version = "6.1.155"
+url_aarch64 = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/aarch64/vmlinux-6.1.155"
+url_x86_64  = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/x86_64/vmlinux-6.1.155"
+sha256_aarch64 = "e3544b10603acbf3db492cb52e000d22ba202cb4b63b9add027565683e11c591"
+sha256_x86_64  = "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2"
 
 [rootfs]
 # Minimal busybox/alpine ext4 for the synthetic profile (built locally, Unit 0.4).
