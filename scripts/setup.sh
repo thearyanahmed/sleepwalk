@@ -28,11 +28,36 @@ fi
 
 # ── runtime deps ─────────────────────────────────────────────────────────────
 # Firecracker ships as a static binary, so no build toolchain — just fetch/unpack
-# tools now; tap/NAT networking deps come in Phase 3.
-_log "installing runtime deps"
-sudo apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    curl ca-certificates tar e2fsprogs iproute2 >/dev/null
+# and a couple of OS tools; tap/NAT networking deps come in Phase 3.
+#
+# These ship in the Ubuntu cloud image already, so we install ONLY what's missing
+# and skip apt entirely otherwise. That matters on path A' (TCG): apt-get triggers
+# Ubuntu's update-notifier (`apt-check`), command-not-found (`cnf-update-db`) and
+# unattended-upgrades hooks, each of which is single-threaded and pathologically
+# slow under emulation — minutes of pegged vCPUs and a stuck dpkg lock.
+#   curl/ca-certificates → fetch artifacts   tar → unpack FC   ip → networking
+#   mkfs.ext4 (e2fsprogs) → build rootfs
+declare -A pkg_for=( [curl]=curl [tar]=tar [ip]=iproute2 [mkfs.ext4]=e2fsprogs )
+missing_pkgs=()
+for tool in "${!pkg_for[@]}"; do
+    command -v "$tool" >/dev/null 2>&1 || missing_pkgs+=("${pkg_for[$tool]}")
+done
+# ca-certificates has no single binary; presence-check the bundle path.
+[[ -e /etc/ssl/certs/ca-certificates.crt ]] || missing_pkgs+=(ca-certificates)
+
+if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
+    _log "all runtime deps already present — skipping apt"
+else
+    _log "installing missing deps: ${missing_pkgs[*]}"
+    # Defuse the TCG-hostile apt hooks before touching apt (idempotent; harmless
+    # on real hardware). update-notifier + command-not-found are the worst.
+    sudo rm -f /etc/apt/apt.conf.d/50command-not-found \
+               /etc/apt/apt.conf.d/99update-notifier
+    sudo systemctl stop unattended-upgrades 2>/dev/null || true
+    sudo apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        "${missing_pkgs[@]}" >/dev/null
+fi
 
 # ── report ───────────────────────────────────────────────────────────────────
 cat <<EOF

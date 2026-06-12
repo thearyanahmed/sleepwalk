@@ -45,11 +45,13 @@ sha256_x86_64  = ""
 
 [dev_vm]
 # Ubuntu cloud image for the M1/M2 TCG dev VM (path A'). Host-side only.
-# https://cloud-images.ubuntu.com/releases/24.04/
+# Pinned to an exact dated build, not the moving `release/` symlink.
+# https://cloud-images.ubuntu.com/releases/24.04/release-20260518/SHA256SUMS
+# x86_64 has no dev VM — path C is native KVM, no nested guest needed.
 ubuntu_release = "24.04"
-ubuntu_img_aarch64 = ""   # e.g. ".../release/ubuntu-24.04-server-cloudimg-arm64.img"
+ubuntu_img_aarch64 = "https://cloud-images.ubuntu.com/releases/24.04/release-20260518/ubuntu-24.04-server-cloudimg-arm64.img"
 ubuntu_img_x86_64  = ""
-sha256_aarch64 = ""
+sha256_aarch64 = "6a61b967ba4a27dd1966f835a67643073ed55c2860ce3dc1cb0517282e6b8bec"
 sha256_x86_64  = ""
 
 [toolchain]

@@ -4,6 +4,15 @@ Zero-perceived-downtime rebalancing for [Firecracker](https://firecracker-microv
 
 **Status:** pre-alpha, pre-`v0.1.0` — under active construction, nothing here is stable yet. See [`ROADMAP.md`](ROADMAP.md) once published, or run `just --list` for the current entry points.
 
+## Local development
+
+Firecracker needs KVM, so development happens inside a Linux VM with `/dev/kvm`. On
+Apple Silicon without hardware nested virtualization (M1/M2), the local dev VM runs
+under QEMU's software CPU emulator (TCG), which boots the full stack correctly but
+~10–30× slower — fine for development and correctness, **never valid for benchmarks**.
+See [`docs/environment.md`](docs/environment.md) for the supported dev paths (native
+KVM on M3+/x86/remote, TCG on M1/M2) and the rationale.
+
 ## License
 
 Apache-2.0.

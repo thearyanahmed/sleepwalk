@@ -14,7 +14,9 @@
 # Scratch results (only curated samples are committed under results/)
 /results/scratch/
 
-# Local dev-VM disk images / cloud-init seeds
+# Local dev-VM workspace: disk images, cloud-init seeds, the generated ssh
+# PRIVATE KEY, UEFI vars, boot logs, throwaway smoke scripts. Never committed.
+/images/dev-vm/
 *.qcow2
 *.img
 seed.iso

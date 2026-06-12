@@ -11,10 +11,12 @@ users:
     ssh_authorized_keys:
       - __PUBKEY__
 ssh_pwauth: false
-package_update: true
-packages:
-  - curl
-  - ca-certificates
-# Touch a sentinel so `setup.sh` / callers can wait for cloud-init to finish.
+# No apt here. Under TCG (path A'), cloud-init's package_update +
+# command-not-found index rebuild (`cnf-update-db`) pegs the emulated CPUs for
+# 1000s+, causing RCU stalls / soft lockups and a boot that never converges.
+# All package work moved to setup.sh, which disables the cnf apt hook first.
 runcmd:
+  # Neuter command-not-found's apt post-invoke hook so later apt runs are fast.
+  - [ rm, -f, /etc/apt/apt.conf.d/50command-not-found ]
+  # Touch a sentinel so `setup.sh` / callers can wait for cloud-init to finish.
   - [ touch, /var/lib/cloud/sleepwalk-ready ]
