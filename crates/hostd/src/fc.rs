@@ -13,6 +13,8 @@ use std::sync::Mutex;
 
 use thiserror::Error;
 
+pub mod real;
+
 /// An error from a single Firecracker control operation.
 #[derive(Debug, Error)]
 pub enum FcError {

@@ -9,6 +9,7 @@ between hosts. Internal crate.
 | Module     | Contents |
 |------------|----------|
 | `fc`       | `FirecrackerApi` — the control port (`boot`/`pause`/`resume`/`shutdown`) every Firecracker effect goes through — plus `FakeFc`, a recording, fault-injecting fake for tests. |
+| `fc::real` | `RealFc` — the production port impl: Firecracker's HTTP API over the per-VM unix socket. Endpoints/bodies match the v1.16.0 spec; fully unit-tested against a stub unix-socket server (no `/dev/kvm` needed). |
 | `vm`       | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
 | `statedir` | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
 
@@ -28,9 +29,11 @@ between hosts. Internal crate.
 
 ## Not here yet (needs `/dev/kvm`)
 
-The real `FirecrackerApi` implementation and jailer spawn require a Linux host
-with KVM (the dev VM). They land in a later slice, exercised by
-`just lifecycle-test`.
+`RealFc` speaks the API, but jailer spawn + process teardown and the end-to-end
+test against a *real* Firecracker require a Linux host with KVM. They land in a
+later slice, exercised by `just lifecycle-test`. `shutdown` currently issues
+`SendCtrlAltDel` (x86 graceful power-off); aarch64 process-reaping arrives with
+the spawn slice.
 
 ## Testing it in isolation
 

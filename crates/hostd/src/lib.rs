@@ -20,6 +20,7 @@ pub mod fc;
 pub mod statedir;
 pub mod vm;
 
+pub use fc::real::RealFc;
 pub use fc::{FakeFc, FcError, FirecrackerApi};
 pub use statedir::VmDir;
 pub use vm::{LifecycleError, RunState, Vm};
