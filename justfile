@@ -73,7 +73,7 @@ bench-restore:
 e2e:
     @echo "not implemented until Phase 5" && exit 1
 
-# Real-agent demo: Claude Code survives migration, O6 (Phase 5b).
+# Real-agent demo: a coding agent survives migration, O6 (Phase 5b).
 demo-real:
     @echo "not implemented until Phase 5b" && exit 1
 
