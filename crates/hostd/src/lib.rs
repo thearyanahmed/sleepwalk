@@ -21,6 +21,7 @@
 
 pub mod firecracker;
 pub mod pseudo_firecracker;
+pub mod quiesce;
 pub mod statedir;
 pub mod transfer;
 pub mod vm;
@@ -29,6 +30,9 @@ pub use firecracker::{
     Firecracker, FirecrackerApi, FirecrackerError, MemBackend, SnapshotSource, SnapshotTarget,
 };
 pub use pseudo_firecracker::PseudoFirecracker;
+pub use quiesce::{
+    AppLayer, InfraLayer, InfraThresholds, QuiescenceDetector, QuiescenceReport, StorageLayer,
+};
 pub use statedir::VmDir;
 pub use transfer::{OutboundFile, TransferError, recv_files, send_files};
 pub use vm::{LifecycleError, RunState, Vm};
