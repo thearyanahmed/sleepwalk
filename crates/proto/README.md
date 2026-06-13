@@ -12,7 +12,7 @@ not a Rust dependency — a non-Rust guest reads the doc, not this crate.
 
 | Module  | Contents |
 |---------|----------|
-| `ids`   | Identifier newtypes — `VmId`, `HostId`, `TurnId`, `AgentVersion`, `Timestamp`. No stringly-typed domain values, no sentinels (absence is `Option`). |
+| `ids`   | Identifier newtypes — `VmId`, `HostId`, `TurnId`, `GuestdVersion`, `Timestamp`. No stringly-typed domain values, no sentinels (absence is `Option`). |
 | `vsock` | The guestd ⇄ hostd protocol: `GuestToHost` / `HostToGuest`, split by direction so an illegal message is unrepresentable. Newline-delimited JSON. |
 | `fsm`   | The migration state machine as a **typestate** (`Migration<S>`) plus a runtime `MigrationState` enum for logs/metrics. |
 

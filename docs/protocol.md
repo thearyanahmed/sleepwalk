@@ -17,7 +17,7 @@ the host listens on a fixed port. One JSON object per line, UTF-8. Messages are
 fieldless message is the bare string `"<Variant>"`.
 
 ```
-{"Hello":{"vm_id":"7e57...","agent_version":"0.1.0"}}
+{"Hello":{"vm_id":"7e57...","guestd_version":"0.1.0"}}
 {"TurnStarted":{"turn_id":7,"ts":1700000000000000000}}
 "Ping"
 ```
@@ -31,7 +31,7 @@ or a host may send in the wrong direction.
 
 | Message | Fields | Meaning |
 |---------|--------|---------|
-| `Hello` | `vm_id` (UUID string), `agent_version` (string) | Boot handshake; binds the connection to a VM and declares the agent version. Must be first. |
+| `Hello` | `vm_id` (UUID string), `guestd_version` (string) | Boot handshake; binds the connection to a VM and declares the guestd version. Must be first. |
 | `TurnStarted` | `turn_id` (int), `ts` (int ns) | A unit of guest work began. The VM is now non-quiescent at the app layer. |
 | `TurnEnded` | `turn_id` (int), `ts` (int ns) | That turn finished. |
 | `DrainAck` | `in_flight` (int turn id **or** `null`) | Reply to `DrainRequest`. `null` ⇒ new turns gated **and** none running (app-layer quiescent). A turn id ⇒ wait for it (or time out). The `null` is always present, never omitted. |

@@ -24,7 +24,7 @@ pub mod vsock;
 mod wire;
 
 pub use fsm::{Migration, MigrationState};
-pub use ids::{AgentVersion, HostId, Timestamp, TurnId, VmId};
+pub use ids::{GuestdVersion, HostId, Timestamp, TurnId, VmId};
 pub use vsock::{GuestToHost, HostToGuest};
 
 /// The guest protocol version this build speaks.
@@ -33,5 +33,5 @@ pub use vsock::{GuestToHost, HostToGuest};
 /// in a way a guest could observe. Pinned to `v1-draft` until the API freeze in
 /// the v0.1.0 release; pre-freeze it may change with a
 /// CHANGELOG entry. The boot [`Hello`][GuestToHost::Hello] carries the guest's
-/// own [`AgentVersion`]; hostd checks compatibility against this.
+/// own [`GuestdVersion`]; hostd checks compatibility against this.
 pub const PROTOCOL_VERSION: &str = "v1-draft";

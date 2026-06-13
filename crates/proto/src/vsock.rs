@@ -14,19 +14,19 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{AgentVersion, Timestamp, TurnId, VmId};
+use crate::ids::{GuestdVersion, Timestamp, TurnId, VmId};
 
 /// Messages the guestd sends to hostd.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuestToHost {
     /// Boot handshake — the first message after the guest comes up. Lets hostd
     /// bind this vsock connection to a [`VmId`] and check the guest's
-    /// [`AgentVersion`] against [`PROTOCOL_VERSION`][crate::PROTOCOL_VERSION].
+    /// [`GuestdVersion`] against [`PROTOCOL_VERSION`][crate::PROTOCOL_VERSION].
     Hello {
         /// Which VM this guest is.
         vm_id: VmId,
         /// The guestd build version.
-        agent_version: AgentVersion,
+        guestd_version: GuestdVersion,
     },
 
     /// Ground-truth busy signal: a turn has started. From this instant the VM
@@ -110,7 +110,7 @@ mod tests {
         let cases = [
             GuestToHost::Hello {
                 vm_id: VmId::from_uuid(uuid::Uuid::nil()),
-                agent_version: AgentVersion::new("0.1.0"),
+                guestd_version: GuestdVersion::new("0.1.0"),
             },
             GuestToHost::TurnStarted {
                 turn_id: TurnId::from_u64(7),

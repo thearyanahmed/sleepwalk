@@ -114,9 +114,9 @@ impl TurnId {
 /// [`PROTOCOL_VERSION`][crate::PROTOCOL_VERSION] for compatibility.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct AgentVersion(String);
+pub struct GuestdVersion(String);
 
-impl AgentVersion {
+impl GuestdVersion {
     /// Construct from any string-like value.
     pub fn new(v: impl Into<String>) -> Self {
         Self(v.into())
@@ -129,7 +129,7 @@ impl AgentVersion {
     }
 }
 
-impl fmt::Display for AgentVersion {
+impl fmt::Display for GuestdVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
