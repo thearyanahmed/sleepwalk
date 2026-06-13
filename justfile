@@ -73,8 +73,8 @@ bench-restore:
 e2e:
     @echo "not implemented until Phase 5" && exit 1
 
-# Real-agent demo: a coding agent survives migration, O6 (Phase 5b).
-demo-real:
+# Agent demo: a coding agent survives migration mid-session, O6 (Phase 5b).
+demo-agent:
     @echo "not implemented until Phase 5b" && exit 1
 
 # Prometheus + Grafana stack (Phase 5).
