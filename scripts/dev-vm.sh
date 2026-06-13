@@ -2,7 +2,7 @@
 # Boot the M1/M2 dev VM (path A'): an aarch64 Ubuntu guest under QEMU TCG with
 # software-emulated EL2, so a *functional* /dev/kvm exists inside it and
 # Firecracker can boot microVMs. ~10-30x slower than native — dev/correctness
-# only, NEVER benchmark-valid (see docs/environment.md, project-plan §2).
+# only, NEVER benchmark-valid (see docs/environment.md).
 #
 # Usage:
 #   scripts/dev-vm.sh            boot (foreground, serial console)

@@ -4,7 +4,7 @@
 #
 # The headline check is /dev/kvm: on path A' it only exists because QEMU is
 # emulating EL2 in software. If this fails on the dev VM, path A' is dead on this
-# machine and tiers 2-3 must go remote (project-plan §2).
+# machine and tiers 2-3 must go remote (see docs/environment.md).
 #
 # Usage (in guest): scripts/setup.sh
 
