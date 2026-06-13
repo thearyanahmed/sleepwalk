@@ -11,8 +11,9 @@
 //! - [`guest::Guest`] — the supervisor state machine (handshake, turn signals,
 //!   drain gate).
 //!
-//! The real `AF_VSOCK` transport and process-wrapping require a running guest
-//! and land in a later slice; everything here is tested against the fake.
+//! The real transport, `VsockChannel` (`AF_VSOCK`), and process-wrapping require
+//! a running guest and land in a later slice; everything here is tested against
+//! the fake.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 

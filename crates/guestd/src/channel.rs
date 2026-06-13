@@ -1,8 +1,8 @@
 //! The vsock channel port.
 //!
 //! [`GuestChannel`] is the seam between the supervisor's logic and the wire. The
-//! real implementation (a later slice) is an `AF_VSOCK` socket carrying
-//! newline-delimited JSON; the scripted test stand-in lives in
+//! real implementation, `VsockChannel` (a later slice), is an `AF_VSOCK` socket
+//! carrying newline-delimited JSON; the scripted test stand-in lives in
 //! [`crate::pseudo_channel`], so the supervisor in [`crate::guest`] is testable
 //! without a real vsock.
 

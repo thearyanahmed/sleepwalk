@@ -18,7 +18,7 @@ safe point" actually safe. Pairs with [`hostd`](../hostd). Internal crate.
 
 - **Traits as ports.** All vsock I/O is behind `GuestChannel`, so the supervisor
   logic tests in milliseconds with no real vsock. The `AF_VSOCK` implementation
-  slots in behind the same trait.
+  (`VsockChannel`) slots in behind the same trait.
 - **The drain gate is the race rule, guest side.** A turn already in flight when
   `DrainRequest` arrives is reported in the `DrainAck` (`in_flight: Some`) and is
   never cut short; turns that arrive after the gate closes are refused
@@ -29,8 +29,9 @@ safe point" actually safe. Pairs with [`hostd`](../hostd). Internal crate.
 
 ## Not here yet (needs a running guest)
 
-The real `AF_VSOCK` transport and wrapping an actual workload process require a
-booted microVM; they land in a later slice, exercised by `just lifecycle-test`.
+The real `AF_VSOCK` transport (`VsockChannel`) and wrapping an actual workload
+process require a booted microVM; they land in a later slice, exercised by
+`just lifecycle-test`.
 
 ## Testing it in isolation
 
