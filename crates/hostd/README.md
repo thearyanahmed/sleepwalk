@@ -12,6 +12,7 @@ between hosts. Internal crate.
 | `pseudo_firecracker` | `PseudoFirecracker` — a recording, fault-injecting stand-in implementing the same trait, so the lifecycle logic tests without a VM. |
 | `vm`                 | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
 | `statedir`           | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
+| `transfer`           | `send_files`/`recv_files` — stream snapshot files between hosts, framed and chunked with a per-file CRC32. Transport-agnostic (works over any stream), tested over an in-memory buffer with real temp files. |
 
 ## Design
 

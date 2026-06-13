@@ -22,6 +22,7 @@
 pub mod firecracker;
 pub mod pseudo_firecracker;
 pub mod statedir;
+pub mod transfer;
 pub mod vm;
 
 pub use firecracker::{
@@ -29,4 +30,5 @@ pub use firecracker::{
 };
 pub use pseudo_firecracker::PseudoFirecracker;
 pub use statedir::VmDir;
+pub use transfer::{OutboundFile, TransferError, recv_files, send_files};
 pub use vm::{LifecycleError, RunState, Vm};

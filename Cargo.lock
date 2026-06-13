@@ -213,6 +213,7 @@ name = "hostd"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "crc32fast",
  "http-body-util",
  "hyper",
  "hyper-util",

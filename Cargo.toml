@@ -23,6 +23,7 @@ hyper-util = "0.1"
 http-body-util = "0.1"
 bytes = "1"
 hdrhistogram = "7"
+crc32fast = "1"
 
 # proto, the public contract, is depended on by every other crate.
 proto = { path = "crates/proto" }
