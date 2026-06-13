@@ -1,0 +1,17 @@
+# harness — open-loop load generator, latency recorder, and chaos harness.
+# Internal crate. This first slice is the measurement math: the arrival schedule
+# (the open-loop, coordinated-omission-safe core) and the latency recorder. The
+# request transport (driving turns through hostd) lands in a later slice.
+[package]
+name = "harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "sleepwalk load generator and latency recorder (internal crate)."
+publish = false
+
+[dependencies]
+hdrhistogram.workspace = true
+thiserror.workspace = true
