@@ -10,8 +10,9 @@ safe point" actually safe. Pairs with [`hostd`](../hostd). Internal crate.
 
 | Module    | Contents |
 |-----------|----------|
-| `channel` | `GuestChannel` — the vsock seam (`send`/`recv`) — plus `FakeChannel`, a scripted, recording fake for tests. |
-| `guest`   | `Guest` — the supervisor state machine: boot handshake, turn signals (`TurnStarted`/`TurnEnded`), and the drain gate (`DrainRequest` → `DrainAck`). |
+| `channel`        | `GuestChannel` — the vsock seam (`send`/`recv`). |
+| `pseudo_channel` | `PseudoChannel` — a scripted, recording stand-in implementing the same trait, for tests. |
+| `guest`          | `Guest` — the supervisor state machine: boot handshake, turn signals (`TurnStarted`/`TurnEnded`), and the drain gate (`DrainRequest` → `DrainAck`). |
 
 ## Design
 
@@ -34,5 +35,5 @@ booted microVM; they land in a later slice, exercised by `just lifecycle-test`.
 ## Testing it in isolation
 
 ```
-cargo test -p guestd       # handshake, turn signals, drain gate — all via FakeChannel
+cargo test -p guestd       # handshake, turn signals, drain gate — all via PseudoChannel
 ```

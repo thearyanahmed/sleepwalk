@@ -190,13 +190,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::channel::FakeChannel;
+    use crate::pseudo_channel::PseudoChannel;
 
-    fn guest() -> Guest<FakeChannel> {
+    fn guest() -> Guest<PseudoChannel> {
         Guest::new(
             VmId::from_uuid(uuid::Uuid::nil()),
             GuestdVersion::new("0.1.0"),
-            FakeChannel::new(),
+            PseudoChannel::new(),
         )
     }
 

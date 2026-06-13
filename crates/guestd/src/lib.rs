@@ -6,8 +6,8 @@
 //! makes "migrate only at a safe point" actually safe. This first slice is the
 //! host-agnostic core:
 //!
-//! - [`channel::GuestChannel`] — the vsock seam, plus a scripted
-//!   [`channel::FakeChannel`] for tests.
+//! - [`channel::GuestChannel`] — the vsock seam, with a scripted
+//!   [`pseudo_channel::PseudoChannel`] stand-in for tests.
 //! - [`guest::Guest`] — the supervisor state machine (handshake, turn signals,
 //!   drain gate).
 //!
@@ -18,6 +18,8 @@
 
 pub mod channel;
 pub mod guest;
+pub mod pseudo_channel;
 
-pub use channel::{ChannelError, FakeChannel, GuestChannel};
+pub use channel::{ChannelError, GuestChannel};
 pub use guest::{Guest, GuestError, StartOutcome};
+pub use pseudo_channel::PseudoChannel;
