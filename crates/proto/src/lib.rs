@@ -4,7 +4,7 @@
 //!
 //! 1. [`ids`] — newtypes for every domain identifier, so a [`VmId`] can never be
 //!    passed where a [`HostId`] is expected.
-//! 2. [`vsock`] — the guest-agent ⇄ hostd wire protocol ([`GuestToHost`] /
+//! 2. [`vsock`] — the guestd ⇄ hostd wire protocol ([`GuestToHost`] /
 //!    [`HostToGuest`]), newline-delimited JSON over vsock.
 //! 3. [`fsm`] — the migration state machine, as a compile-time
 //!    [typestate][`fsm::Migration`] plus a runtime-inspectable

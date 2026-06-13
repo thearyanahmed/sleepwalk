@@ -1,7 +1,7 @@
 # Guest protocol & migration state machine
 
 This is the **integration contract**. Anything that speaks it — the stock
-`guest-agent`, or your own workload's harness — interoperates with `sleepwalk`
+`guestd`, or your own workload's harness — interoperates with `sleepwalk`
 without depending on our source. The Rust types in the `proto` crate mirror this
 document; where they ever disagree, this document is the spec.
 

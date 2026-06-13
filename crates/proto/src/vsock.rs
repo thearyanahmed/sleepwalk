@@ -1,4 +1,4 @@
-//! The guest-agent ⇄ hostd vsock protocol.
+//! The guestd ⇄ hostd vsock protocol.
 //!
 //! Newline-delimited JSON over a per-VM vsock CID on a fixed port. The two
 //! enums are split by **direction** so an illegal message is unrepresentable:
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentVersion, Timestamp, TurnId, VmId};
 
-/// Messages the guest-agent sends to hostd.
+/// Messages the guestd sends to hostd.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuestToHost {
     /// Boot handshake — the first message after the guest comes up. Lets hostd
@@ -25,7 +25,7 @@ pub enum GuestToHost {
     Hello {
         /// Which VM this guest is.
         vm_id: VmId,
-        /// The guest-agent build version.
+        /// The guestd build version.
         agent_version: AgentVersion,
     },
 
@@ -68,12 +68,12 @@ pub enum GuestToHost {
     Pong,
 }
 
-/// Messages hostd sends to the guest-agent.
+/// Messages hostd sends to the guestd.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HostToGuest {
     /// API-key/secret handoff at boot. Delivered over vsock precisely so it is
     /// never baked into the rootfs or the kernel cmdline (ADR-005). The
-    /// guest-agent sets these in the harness env and execs it.
+    /// guestd sets these in the harness env and execs it.
     Secrets {
         /// Environment variables to inject. `BTreeMap` for a deterministic wire
         /// order (stable round-trips, reproducible transcripts).

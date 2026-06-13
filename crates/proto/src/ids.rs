@@ -108,7 +108,7 @@ impl TurnId {
     }
 }
 
-/// The guest-agent build version from the boot [`Hello`][crate::GuestToHost::Hello].
+/// The guestd build version from the boot [`Hello`][crate::GuestToHost::Hello].
 ///
 /// A free-form version string (semver in practice) that hostd checks against
 /// [`PROTOCOL_VERSION`][crate::PROTOCOL_VERSION] for compatibility.
