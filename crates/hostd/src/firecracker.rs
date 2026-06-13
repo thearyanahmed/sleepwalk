@@ -1,9 +1,13 @@
-//! The real [`FirecrackerApi`] — Firecracker's HTTP API over its per-VM unix
-//! socket.
+//! The Firecracker control port and its real implementation.
 //!
-//! Each call opens a connection to the socket, sends one HTTP/1.1 request, and
-//! checks the status: Firecracker answers `204 No Content` on success and `400`
-//! (or a default error) with a JSON `{"fault_message": "..."}` body on failure.
+//! [`FirecrackerApi`] is the small trait every external Firecracker effect goes
+//! through. [`Firecracker`] is the real implementation: it drives Firecracker's
+//! HTTP API over the per-VM unix socket. The test stand-in lives next door in
+//! [`crate::pseudo_firecracker`].
+//!
+//! Each implementor is bound to exactly one VM (it owns that VM's socket path),
+//! so the methods take no VM argument.
+//!
 //! Endpoints and bodies are taken from the Firecracker v1.16.0 API spec
 //! (`firecracker.yaml`):
 //!
@@ -14,10 +18,8 @@
 //! | resume   | PATCH  | `/vm`      | `{"state":"Resumed"}`               |
 //! | shutdown | PUT    | `/actions` | `{"action_type":"SendCtrlAltDel"}`  |
 //!
-//! `SendCtrlAltDel` is an x86-only graceful power-off in Firecracker; on aarch64
-//! there is no equivalent and the host reaps the process instead. Process spawn
-//! and teardown are hostd's job around this client (a later slice); `RealFc` is
-//! purely the API surface.
+//! Firecracker answers `204 No Content` on success and `400` (or a default
+//! error) with a JSON `{"fault_message": "..."}` body on failure.
 
 use std::path::{Path, PathBuf};
 
@@ -25,17 +27,57 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request};
 use hyper_util::rt::TokioIo;
+use thiserror::Error;
 use tokio::net::UnixStream;
 
-use super::{FcError, FirecrackerApi};
+/// An error from a single Firecracker control operation.
+#[derive(Debug, Error)]
+pub enum FirecrackerError {
+    /// The operation reached Firecracker but it rejected or failed it. `detail`
+    /// carries enough to debug from a log line.
+    #[error("firecracker rejected {op}: {detail}")]
+    Rejected {
+        /// The operation that failed (`boot`, `pause`, …).
+        op: &'static str,
+        /// Firecracker's error detail.
+        detail: String,
+    },
 
-/// A Firecracker control client bound to one VM's API socket.
+    /// Firecracker was unreachable (socket gone, process dead, I/O error).
+    #[error("firecracker unreachable for {op}: {detail}")]
+    Unreachable {
+        /// The operation being attempted.
+        op: &'static str,
+        /// What went wrong reaching it.
+        detail: String,
+    },
+}
+
+/// The control surface hostd drives for one microVM.
+///
+/// The four operations map onto Firecracker's API (see the module docs).
+/// `shutdown` issues `SendCtrlAltDel`, an x86-only graceful power-off; on
+/// aarch64 there is no equivalent and the host reaps the process instead.
+/// Process spawn and teardown are hostd's job around this client (a later
+/// slice); the implementations here are purely the API surface.
+pub trait FirecrackerApi {
+    /// Start the configured guest (boot the kernel).
+    fn boot(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Pause the VM (vCPUs stopped); prerequisite for snapshotting.
+    fn pause(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Resume a paused VM.
+    fn resume(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Stop the VM and its Firecracker process.
+    fn shutdown(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+}
+
+/// The real control client, bound to one VM's API socket.
 #[derive(Clone, Debug)]
-pub struct RealFc {
+pub struct Firecracker {
     socket: PathBuf,
 }
 
-impl RealFc {
+impl Firecracker {
     /// Bind to the Firecracker API unix socket at `socket` (typically
     /// [`crate::statedir::VmDir::api_socket`]).
     #[must_use]
@@ -51,19 +93,20 @@ impl RealFc {
         &self.socket
     }
 
-    /// Send one request to Firecracker and map the outcome to [`FcError`].
+    /// Send one request to Firecracker and map the outcome to
+    /// [`FirecrackerError`].
     ///
-    /// Any failure reaching or talking to the socket is [`FcError::Unreachable`];
-    /// a non-204 response is [`FcError::Rejected`] carrying Firecracker's
-    /// `fault_message`.
+    /// Any failure reaching or talking to the socket is
+    /// [`FirecrackerError::Unreachable`]; a non-204 response is
+    /// [`FirecrackerError::Rejected`] carrying Firecracker's `fault_message`.
     async fn send(
         &self,
         method: Method,
         path: &'static str,
         body: &'static str,
         op: &'static str,
-    ) -> Result<(), FcError> {
-        let unreachable = |detail: String| FcError::Unreachable { op, detail };
+    ) -> Result<(), FirecrackerError> {
+        let unreachable = |detail: String| FirecrackerError::Unreachable { op, detail };
 
         let stream = UnixStream::connect(&self.socket)
             .await
@@ -101,7 +144,7 @@ impl RealFc {
             .await
             .map_err(|e| unreachable(format!("read response body: {e}")))?
             .to_bytes();
-        Err(FcError::Rejected {
+        Err(FirecrackerError::Rejected {
             op,
             detail: fault_message(&bytes, status.as_u16()),
         })
@@ -123,8 +166,8 @@ fn fault_message(body: &[u8], status: u16) -> String {
         })
 }
 
-impl FirecrackerApi for RealFc {
-    async fn boot(&self) -> Result<(), FcError> {
+impl FirecrackerApi for Firecracker {
+    async fn boot(&self) -> Result<(), FirecrackerError> {
         self.send(
             Method::PUT,
             "/actions",
@@ -134,17 +177,17 @@ impl FirecrackerApi for RealFc {
         .await
     }
 
-    async fn pause(&self) -> Result<(), FcError> {
+    async fn pause(&self) -> Result<(), FirecrackerError> {
         self.send(Method::PATCH, "/vm", r#"{"state":"Paused"}"#, "pause")
             .await
     }
 
-    async fn resume(&self) -> Result<(), FcError> {
+    async fn resume(&self) -> Result<(), FirecrackerError> {
         self.send(Method::PATCH, "/vm", r#"{"state":"Resumed"}"#, "resume")
             .await
     }
 
-    async fn shutdown(&self) -> Result<(), FcError> {
+    async fn shutdown(&self) -> Result<(), FirecrackerError> {
         self.send(
             Method::PUT,
             "/actions",
@@ -221,8 +264,8 @@ mod tests {
     }
 
     /// Spawn a stub that accepts one connection, records the request, and
-    /// replies with `response`. Returns the bound `RealFc` and the capture slot.
-    async fn stub(response: &'static str) -> (RealFc, Arc<Mutex<Captured>>) {
+    /// replies with `response`. Returns the bound client and the capture slot.
+    async fn stub(response: &'static str) -> (Firecracker, Arc<Mutex<Captured>>) {
         let path = temp_socket();
         let listener = UnixListener::bind(&path).expect("bind");
         let captured = Arc::new(Mutex::new(Captured::default()));
@@ -239,7 +282,7 @@ mod tests {
             stream.write_all(response.as_bytes()).await.expect("write");
             stream.flush().await.expect("flush");
         });
-        (RealFc::new(path), captured)
+        (Firecracker::new(path), captured)
     }
 
     const OK_204: &str = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
@@ -284,7 +327,6 @@ mod tests {
     #[tokio::test]
     async fn fault_response_becomes_rejected_with_message() {
         let body = r#"{"fault_message":"cannot start: already running"}"#;
-        // Build a 400 response carrying the fault JSON.
         let resp: &'static str = Box::leak(
             format!(
                 "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -296,7 +338,7 @@ mod tests {
         let (fc, _cap) = stub(resp).await;
         let err = fc.boot().await.expect_err("must be rejected");
         match err {
-            FcError::Rejected { op, detail } => {
+            FirecrackerError::Rejected { op, detail } => {
                 assert_eq!(op, "boot");
                 assert_eq!(detail, "cannot start: already running");
             }
@@ -306,8 +348,11 @@ mod tests {
 
     #[tokio::test]
     async fn missing_socket_is_unreachable() {
-        let fc = RealFc::new(temp_socket()); // never bound
+        let fc = Firecracker::new(temp_socket()); // never bound
         let err = fc.boot().await.expect_err("must be unreachable");
-        assert!(matches!(err, FcError::Unreachable { op: "boot", .. }));
+        assert!(matches!(
+            err,
+            FirecrackerError::Unreachable { op: "boot", .. }
+        ));
     }
 }

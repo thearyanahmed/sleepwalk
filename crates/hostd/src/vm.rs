@@ -15,7 +15,7 @@
 use proto::VmId;
 use thiserror::Error;
 
-use crate::fc::{FcError, FirecrackerApi};
+use crate::firecracker::{FirecrackerApi, FirecrackerError};
 
 /// The lifecycle state of a managed VM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub enum LifecycleError {
 
     /// The operation was legal but Firecracker failed it.
     #[error(transparent)]
-    Fc(#[from] FcError),
+    Firecracker(#[from] FirecrackerError),
 }
 
 /// One microVM managed by hostd: its identity, its control port, its state.
@@ -131,10 +131,10 @@ impl<F: FirecrackerApi> Vm<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fc::FakeFc;
+    use crate::pseudo_firecracker::PseudoFirecracker;
 
-    fn vm() -> Vm<FakeFc> {
-        Vm::new(VmId::from_uuid(uuid::Uuid::nil()), FakeFc::new())
+    fn vm() -> Vm<PseudoFirecracker> {
+        Vm::new(VmId::from_uuid(uuid::Uuid::nil()), PseudoFirecracker::new())
     }
 
     #[tokio::test]
@@ -206,7 +206,7 @@ mod tests {
         let err = vm.boot().await.expect_err("boot should fail");
         assert!(matches!(
             err,
-            LifecycleError::Fc(FcError::Rejected { op: "boot", .. })
+            LifecycleError::Firecracker(FirecrackerError::Rejected { op: "boot", .. })
         ));
         // boot was attempted but failed: VM stays Created, so a retry is legal.
         assert_eq!(vm.state(), RunState::Created);
@@ -222,7 +222,7 @@ mod tests {
         let err = vm.pause().await.expect_err("pause should fail");
         assert!(matches!(
             err,
-            LifecycleError::Fc(FcError::Unreachable { op: "pause", .. })
+            LifecycleError::Firecracker(FirecrackerError::Unreachable { op: "pause", .. })
         ));
         // The op was legal, so the VM is left Running (Firecracker, not the
         // guard, refused it) — caller may retry.

@@ -6,12 +6,12 @@ between hosts. Internal crate.
 
 ## What's here (first slice)
 
-| Module     | Contents |
-|------------|----------|
-| `fc`       | `FirecrackerApi` — the control port (`boot`/`pause`/`resume`/`shutdown`) every Firecracker effect goes through — plus `FakeFc`, a recording, fault-injecting fake for tests. |
-| `fc::real` | `RealFc` — the production port impl: Firecracker's HTTP API over the per-VM unix socket. Endpoints/bodies match the v1.16.0 spec; fully unit-tested against a stub unix-socket server (no `/dev/kvm` needed). |
-| `vm`       | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
-| `statedir` | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
+| Module               | Contents |
+|----------------------|----------|
+| `firecracker`        | `FirecrackerApi` — the control port (`boot`/`pause`/`resume`/`shutdown`) every Firecracker effect goes through — and `Firecracker`, the production impl: its HTTP API over the per-VM unix socket. Endpoints/bodies match the v1.16.0 spec; unit-tested against a stub unix-socket server (no `/dev/kvm` needed). |
+| `pseudo_firecracker` | `PseudoFirecracker` — a recording, fault-injecting stand-in implementing the same trait, so the lifecycle logic tests without a VM. |
+| `vm`                 | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
+| `statedir`           | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
 
 ## Design
 
@@ -29,7 +29,7 @@ between hosts. Internal crate.
 
 ## Not here yet (needs `/dev/kvm`)
 
-`RealFc` speaks the API, but jailer spawn + process teardown and the end-to-end
+`Firecracker` speaks the API, but jailer spawn + process teardown and the end-to-end
 test against a *real* Firecracker require a Linux host with KVM. They land in a
 later slice, exercised by `just lifecycle-test`. `shutdown` currently issues
 `SendCtrlAltDel` (x86 graceful power-off); aarch64 process-reaping arrives with
@@ -38,5 +38,5 @@ the spawn slice.
 ## Testing it in isolation
 
 ```
-cargo test -p hostd        # lifecycle orchestration + state-dir layout, all via FakeFc
+cargo test -p hostd        # lifecycle + state-dir via PseudoFirecracker; the real client via a stub socket
 ```
