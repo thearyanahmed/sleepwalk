@@ -9,7 +9,7 @@
 
 use std::sync::Mutex;
 
-use crate::firecracker::{FirecrackerApi, FirecrackerError};
+use crate::firecracker::{FirecrackerApi, FirecrackerError, SnapshotSource, SnapshotTarget};
 
 /// A fake Firecracker that records calls and can inject failures.
 #[derive(Debug, Default)]
@@ -93,5 +93,11 @@ impl FirecrackerApi for PseudoFirecracker {
     }
     async fn shutdown(&self) -> Result<(), FirecrackerError> {
         self.record("shutdown")
+    }
+    async fn create_snapshot(&self, _target: SnapshotTarget) -> Result<(), FirecrackerError> {
+        self.record("create_snapshot")
+    }
+    async fn load_snapshot(&self, _source: SnapshotSource) -> Result<(), FirecrackerError> {
+        self.record("load_snapshot")
     }
 }

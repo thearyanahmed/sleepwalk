@@ -8,7 +8,7 @@ between hosts. Internal crate.
 
 | Module               | Contents |
 |----------------------|----------|
-| `firecracker`        | `FirecrackerApi` — the control port (`boot`/`pause`/`resume`/`shutdown`) every Firecracker effect goes through — and `Firecracker`, the production impl: its HTTP API over the per-VM unix socket. Endpoints/bodies match the v1.16.0 spec; unit-tested against a stub unix-socket server (no `/dev/kvm` needed). |
+| `firecracker`        | `FirecrackerApi` — the control port (`boot`/`pause`/`resume`/`shutdown` + `create_snapshot`/`load_snapshot`) every Firecracker effect goes through — and `Firecracker`, the production impl: its HTTP API over the per-VM unix socket. Endpoints/bodies match the v1.16.0 spec; unit-tested against a stub unix-socket server (no `/dev/kvm` needed). |
 | `pseudo_firecracker` | `PseudoFirecracker` — a recording, fault-injecting stand-in implementing the same trait, so the lifecycle logic tests without a VM. |
 | `vm`                 | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
 | `statedir`           | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |

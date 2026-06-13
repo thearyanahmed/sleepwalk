@@ -11,12 +11,14 @@
 //! Endpoints and bodies are taken from the Firecracker v1.16.0 API spec
 //! (`firecracker.yaml`):
 //!
-//! | op       | method | path       | body                                |
-//! |----------|--------|------------|-------------------------------------|
-//! | boot     | PUT    | `/actions` | `{"action_type":"InstanceStart"}`   |
-//! | pause    | PATCH  | `/vm`      | `{"state":"Paused"}`                |
-//! | resume   | PATCH  | `/vm`      | `{"state":"Resumed"}`               |
-//! | shutdown | PUT    | `/actions` | `{"action_type":"SendCtrlAltDel"}`  |
+//! | op              | method | path               | body                                |
+//! |-----------------|--------|--------------------|-------------------------------------|
+//! | boot            | PUT    | `/actions`         | `{"action_type":"InstanceStart"}`   |
+//! | pause           | PATCH  | `/vm`              | `{"state":"Paused"}`                |
+//! | resume          | PATCH  | `/vm`              | `{"state":"Resumed"}`               |
+//! | shutdown        | PUT    | `/actions`         | `{"action_type":"SendCtrlAltDel"}`  |
+//! | create_snapshot | PUT    | `/snapshot/create` | `{mem_file_path, snapshot_path, snapshot_type:"Full"}` |
+//! | load_snapshot   | PUT    | `/snapshot/load`   | `{snapshot_path, mem_backend{backend_type,backend_path}, resume_vm}` |
 //!
 //! Firecracker answers `204 No Content` on success and `400` (or a default
 //! error) with a JSON `{"fault_message": "..."}` body on failure.
@@ -53,9 +55,46 @@ pub enum FirecrackerError {
     },
 }
 
+/// Where a snapshot's two files are written (`PUT /snapshot/create`). The VM
+/// must be paused first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotTarget {
+    /// Destination for the guest memory dump (`mem_file_path`).
+    pub mem_file: PathBuf,
+    /// Destination for the VM state file (`snapshot_path`).
+    pub state_file: PathBuf,
+}
+
+/// How memory is supplied when restoring a snapshot (`mem_backend`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemBackend {
+    /// Restore memory eagerly from the snapshot's memory file.
+    File {
+        /// The memory file to read (`backend_path`).
+        mem_file: PathBuf,
+    },
+    /// Serve memory lazily over a UFFD socket — the page server listens there
+    /// (`backend_path`). This is the lazy-restore path.
+    Uffd {
+        /// The UFFD socket the page server is bound to.
+        socket: PathBuf,
+    },
+}
+
+/// Inputs for restoring a snapshot (`PUT /snapshot/load`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotSource {
+    /// The VM state file to load (`snapshot_path`).
+    pub state_file: PathBuf,
+    /// How guest memory is provided.
+    pub backend: MemBackend,
+    /// Whether to resume the VM immediately after loading (`resume_vm`).
+    pub resume: bool,
+}
+
 /// The control surface hostd drives for one microVM.
 ///
-/// The four operations map onto Firecracker's API (see the module docs).
+/// The lifecycle operations map onto Firecracker's API (see the module docs).
 /// `shutdown` issues `SendCtrlAltDel`, an x86-only graceful power-off; on
 /// aarch64 there is no equivalent and the host reaps the process instead.
 /// Process spawn and teardown are hostd's job around this client (a later
@@ -69,6 +108,16 @@ pub trait FirecrackerApi {
     fn resume(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
     /// Stop the VM and its Firecracker process.
     fn shutdown(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Snapshot the paused VM to the given files.
+    fn create_snapshot(
+        &self,
+        target: SnapshotTarget,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Restore a VM from a snapshot, optionally resuming it.
+    fn load_snapshot(
+        &self,
+        source: SnapshotSource,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
 }
 
 /// The real control client, bound to one VM's API socket.
@@ -103,7 +152,7 @@ impl Firecracker {
         &self,
         method: Method,
         path: &'static str,
-        body: &'static str,
+        body: Bytes,
         op: &'static str,
     ) -> Result<(), FirecrackerError> {
         let unreachable = |detail: String| FirecrackerError::Unreachable { op, detail };
@@ -125,7 +174,7 @@ impl Firecracker {
             .uri(path)
             .header(hyper::header::HOST, "localhost")
             .header(hyper::header::CONTENT_TYPE, "application/json")
-            .body(Full::new(Bytes::from_static(body.as_bytes())))
+            .body(Full::new(body))
             .map_err(|e| unreachable(format!("build request: {e}")))?;
 
         let resp = sender
@@ -166,35 +215,91 @@ fn fault_message(body: &[u8], status: u16) -> String {
         })
 }
 
+/// Serialize a JSON value into a request body, mapping a serialize failure to a
+/// (practically unreachable) error tagged with `op`.
+fn json_body(value: &serde_json::Value, op: &'static str) -> Result<Bytes, FirecrackerError> {
+    serde_json::to_vec(value)
+        .map(Bytes::from)
+        .map_err(|e| FirecrackerError::Unreachable {
+            op,
+            detail: format!("serialize body: {e}"),
+        })
+}
+
+/// Render a path for a JSON string field (lossy on the rare non-UTF-8 path).
+fn path_str(p: &std::path::Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
 impl FirecrackerApi for Firecracker {
     async fn boot(&self) -> Result<(), FirecrackerError> {
         self.send(
             Method::PUT,
             "/actions",
-            r#"{"action_type":"InstanceStart"}"#,
+            Bytes::from_static(br#"{"action_type":"InstanceStart"}"#),
             "boot",
         )
         .await
     }
 
     async fn pause(&self) -> Result<(), FirecrackerError> {
-        self.send(Method::PATCH, "/vm", r#"{"state":"Paused"}"#, "pause")
-            .await
+        self.send(
+            Method::PATCH,
+            "/vm",
+            Bytes::from_static(br#"{"state":"Paused"}"#),
+            "pause",
+        )
+        .await
     }
 
     async fn resume(&self) -> Result<(), FirecrackerError> {
-        self.send(Method::PATCH, "/vm", r#"{"state":"Resumed"}"#, "resume")
-            .await
+        self.send(
+            Method::PATCH,
+            "/vm",
+            Bytes::from_static(br#"{"state":"Resumed"}"#),
+            "resume",
+        )
+        .await
     }
 
     async fn shutdown(&self) -> Result<(), FirecrackerError> {
         self.send(
             Method::PUT,
             "/actions",
-            r#"{"action_type":"SendCtrlAltDel"}"#,
+            Bytes::from_static(br#"{"action_type":"SendCtrlAltDel"}"#),
             "shutdown",
         )
         .await
+    }
+
+    async fn create_snapshot(&self, target: SnapshotTarget) -> Result<(), FirecrackerError> {
+        let body = json_body(
+            &serde_json::json!({
+                "mem_file_path": path_str(&target.mem_file),
+                "snapshot_path": path_str(&target.state_file),
+                "snapshot_type": "Full",
+            }),
+            "create_snapshot",
+        )?;
+        self.send(Method::PUT, "/snapshot/create", body, "create_snapshot")
+            .await
+    }
+
+    async fn load_snapshot(&self, source: SnapshotSource) -> Result<(), FirecrackerError> {
+        let (backend_type, backend_path) = match &source.backend {
+            MemBackend::File { mem_file } => ("File", path_str(mem_file)),
+            MemBackend::Uffd { socket } => ("Uffd", path_str(socket)),
+        };
+        let body = json_body(
+            &serde_json::json!({
+                "snapshot_path": path_str(&source.state_file),
+                "mem_backend": { "backend_type": backend_type, "backend_path": backend_path },
+                "resume_vm": source.resume,
+            }),
+            "load_snapshot",
+        )?;
+        self.send(Method::PUT, "/snapshot/load", body, "load_snapshot")
+            .await
     }
 }
 
@@ -354,5 +459,66 @@ mod tests {
             err,
             FirecrackerError::Unreachable { op: "boot", .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn create_snapshot_sends_paths_and_full_type() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.create_snapshot(SnapshotTarget {
+            mem_file: PathBuf::from("/snap/mem"),
+            state_file: PathBuf::from("/snap/state"),
+        })
+        .await
+        .expect("create ok");
+
+        let c = cap.lock().await;
+        assert_eq!(c.method, "PUT");
+        assert_eq!(c.path, "/snapshot/create");
+        let body: serde_json::Value = serde_json::from_str(&c.body).expect("json body");
+        assert_eq!(body["mem_file_path"], "/snap/mem");
+        assert_eq!(body["snapshot_path"], "/snap/state");
+        assert_eq!(body["snapshot_type"], "Full");
+    }
+
+    #[tokio::test]
+    async fn load_snapshot_with_uffd_backend_requests_lazy_restore() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.load_snapshot(SnapshotSource {
+            state_file: PathBuf::from("/snap/state"),
+            backend: MemBackend::Uffd {
+                socket: PathBuf::from("/run/uffd.sock"),
+            },
+            resume: true,
+        })
+        .await
+        .expect("load ok");
+
+        let c = cap.lock().await;
+        assert_eq!(c.path, "/snapshot/load");
+        let body: serde_json::Value = serde_json::from_str(&c.body).expect("json body");
+        assert_eq!(body["snapshot_path"], "/snap/state");
+        assert_eq!(body["mem_backend"]["backend_type"], "Uffd");
+        assert_eq!(body["mem_backend"]["backend_path"], "/run/uffd.sock");
+        assert_eq!(body["resume_vm"], true);
+    }
+
+    #[tokio::test]
+    async fn load_snapshot_with_file_backend_uses_mem_file() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.load_snapshot(SnapshotSource {
+            state_file: PathBuf::from("/snap/state"),
+            backend: MemBackend::File {
+                mem_file: PathBuf::from("/snap/mem"),
+            },
+            resume: false,
+        })
+        .await
+        .expect("load ok");
+
+        let c = cap.lock().await;
+        let body: serde_json::Value = serde_json::from_str(&c.body).expect("json body");
+        assert_eq!(body["mem_backend"]["backend_type"], "File");
+        assert_eq!(body["mem_backend"]["backend_path"], "/snap/mem");
+        assert_eq!(body["resume_vm"], false);
     }
 }

@@ -24,7 +24,9 @@ pub mod pseudo_firecracker;
 pub mod statedir;
 pub mod vm;
 
-pub use firecracker::{Firecracker, FirecrackerApi, FirecrackerError};
+pub use firecracker::{
+    Firecracker, FirecrackerApi, FirecrackerError, MemBackend, SnapshotSource, SnapshotTarget,
+};
 pub use pseudo_firecracker::PseudoFirecracker;
 pub use statedir::VmDir;
 pub use vm::{LifecycleError, RunState, Vm};
