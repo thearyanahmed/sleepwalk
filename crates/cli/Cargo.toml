@@ -1,0 +1,15 @@
+# The `sleepwalk` binary — the only crate published to crates.io in 0.1.
+[package]
+name = "sleepwalk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Zero-perceived-downtime Firecracker microVM rebalancing via snapshot → transfer → UFFD lazy restore at verified quiescence."
+
+[[bin]]
+name = "sleepwalk"
+path = "src/main.rs"
+
+[dependencies]

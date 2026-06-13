@@ -1,6 +1,22 @@
-[package]
-name = "sleepwalk"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Internal workspace crates are NOT prefixed with the project name (proto, cli,
+# …); only the `sleepwalk` binary crate (crates/cli) is published.
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95.0"
+license = "Apache-2.0"
+repository = "https://github.com/thearyanahmed/sleepwalk"
 
-[dependencies]
+[workspace.dependencies]
+# Shared across crates; concrete versions pinned here, the source of truth.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+
+# proto, the public contract, is depended on by every other crate.
+proto = { path = "crates/proto" }
