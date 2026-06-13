@@ -1,0 +1,23 @@
+# guestd — the in-VM supervisor: speaks the guest half of the vsock protocol,
+# reports turn boundaries, holds the drain gate, takes secrets at boot, and
+# fixes the clock up on resume. Internal crate. This first slice is the
+# mock-testable core (the GuestChannel port + the supervisor state machine);
+# the real AF_VSOCK transport and process-wrapping land in a /dev/kvm session.
+[package]
+name = "guestd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "sleepwalk in-VM supervisor (internal crate)."
+publish = false
+
+[dependencies]
+proto.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "sync", "rt-multi-thread"] }
+uuid.workspace = true

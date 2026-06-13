@@ -76,6 +76,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "guestd"
+version = "0.1.0"
+dependencies = [
+ "proto",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
