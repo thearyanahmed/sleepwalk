@@ -1,8 +1,11 @@
 /target
 
-# Secrets — never committed (see CLAUDE.local.md §secrets, ADR-005)
+# Secrets — never committed (see ADR-005; snapshot files are RAM dumps)
 .env
 *.env
+
+# Local config (the committed sample is sleepwalk.example.toml)
+/sleepwalk.toml
 
 # Fetched artifacts (pinned + hashed in images/versions.toml, fetched by `just fetch`)
 /images/artifacts/

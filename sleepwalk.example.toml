@@ -1,0 +1,20 @@
+# sleepwalk configuration.
+#
+# Every key is optional; the values shown are the defaults, so an empty file (or
+# no file at all) behaves exactly like this. Unknown keys are rejected, so a typo
+# fails loudly instead of being ignored. Copy to `sleepwalk.toml` to customise.
+
+# Where per-VM state directories live (one subdir per VM; the jailer chroots here).
+state_dir = "/var/lib/sleepwalk"
+
+[quiescence]
+# A vCPU utilisation sample below this percent counts as "quiet".
+cpu_pct = 5.0
+# Consecutive quiet samples required before the infra layer is considered quiet.
+samples = 5
+# Milliseconds between quiescence samples.
+sample_interval_ms = 200
+
+[migration]
+# How long to wait for an in-flight turn before aborting a drain (the turn wins).
+drain_deadline_ms = 5000
