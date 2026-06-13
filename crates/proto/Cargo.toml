@@ -1,0 +1,20 @@
+# proto — the PUBLIC contract: vsock messages, hostd API, migration FSM states.
+# Mirrors the protocol doc (docs/protocol.md); the versioned integration surface
+# (O8). No I/O, no tokio — pure types + serde, host-agnostic (tier 1).
+[package]
+name = "proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "sleepwalk wire protocol and migration state-machine types (internal crate)."
+publish = false
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
