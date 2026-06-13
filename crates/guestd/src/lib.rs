@@ -18,9 +18,11 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod channel;
+pub mod framing;
 pub mod guest;
 pub mod pseudo_channel;
 
 pub use channel::{ChannelError, GuestChannel};
+pub use framing::JsonLineChannel;
 pub use guest::{Guest, GuestError, StartOutcome};
 pub use pseudo_channel::PseudoChannel;

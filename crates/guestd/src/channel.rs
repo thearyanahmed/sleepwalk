@@ -19,6 +19,10 @@ pub enum ChannelError {
     /// An I/O error on the underlying transport.
     #[error("guest channel io: {0}")]
     Io(String),
+
+    /// A line was received that did not decode to a valid message.
+    #[error("guest channel malformed message: {0}")]
+    Malformed(String),
 }
 
 /// The vsock channel the supervisor uses to talk to hostd.

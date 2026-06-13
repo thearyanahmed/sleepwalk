@@ -11,6 +11,7 @@ safe point" actually safe. Pairs with [`hostd`](../hostd). Internal crate.
 | Module    | Contents |
 |-----------|----------|
 | `channel`        | `GuestChannel` — the vsock seam (`send`/`recv`). |
+| `framing`        | `JsonLineChannel` — `GuestChannel` as newline-delimited JSON over any byte stream. Transport-agnostic, so tested over an in-memory duplex; the real `VsockChannel` is this over an `AF_VSOCK` stream. |
 | `pseudo_channel` | `PseudoChannel` — a scripted, recording stand-in implementing the same trait, for tests. |
 | `guest`          | `Guest` — the supervisor state machine: boot handshake, turn signals (`TurnStarted`/`TurnEnded`), and the drain gate (`DrainRequest` → `DrainAck`). |
 

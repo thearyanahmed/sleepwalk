@@ -16,8 +16,9 @@ publish = false
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "sync"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "sync", "io-util"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "sync", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "io-util", "rt-multi-thread"] }
 uuid.workspace = true

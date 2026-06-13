@@ -159,6 +159,7 @@ name = "guestd"
 version = "0.1.0"
 dependencies = [
  "proto",
+ "serde_json",
  "thiserror",
  "tokio",
  "uuid",
