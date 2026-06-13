@@ -1,0 +1,20 @@
+# rebalancer — the control plane: placement, pressure detection, and the
+# migration FSM driver. Internal crate. This first slice is the mock-testable
+# migration driver (it walks proto's typestate through a MigrationExecutor port);
+# placement/pressure heuristics and the real executor land in later slices.
+[package]
+name = "rebalancer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "sleepwalk control plane and migration driver (internal crate)."
+publish = false
+
+[dependencies]
+proto.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
