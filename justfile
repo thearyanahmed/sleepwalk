@@ -55,6 +55,24 @@ dev-vm-setup:
 up:
     @echo "not implemented until Phase 0 / Unit 0.4 (first-microvm)" && exit 1
 
+# ── remote · drive a Linux box over SSH (config in gitignored .env) ───────
+
+# Sync the working tree to the remote (copy .env.example -> .env first).
+remote-sync:
+    scripts/remote.sh sync
+
+# Shell into the remote, or run a one-off command: `just remote-ssh 'nproc'`.
+remote-ssh *CMD:
+    scripts/remote.sh ssh {{CMD}}
+
+# Sync, then provision the remote (scripts/setup.sh).
+remote-setup *ARGS:
+    scripts/remote.sh setup {{ARGS}}
+
+# Sync, then run a just target on the remote: `just remote-run test`.
+remote-run TARGET:
+    scripts/remote.sh run {{TARGET}}
+
 # ── tier 2 · functional KVM (needs /dev/kvm) ──────────────────────────────
 
 # Single-host snapshot/restore lifecycle (Phase 1).
@@ -65,9 +83,9 @@ lifecycle-test:
 migrate-test:
     @echo "not implemented until Phase 3" && exit 1
 
-# Turn-vs-drain chaos against real VMs, 100 wall-clock runs (Phase 4).
+# Turn-vs-drain chaos against real VMs, 100 wall-clock runs.
 chaos-vm:
-    @echo "not implemented until Phase 4 (real-VM tier)" && exit 1
+    @echo "not implemented yet (needs the real-VM tier)" && exit 1
 
 # ── tier 3 · real KVM only (benchmark-valid — refuses TCG) ─────────────────
 
