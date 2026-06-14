@@ -14,13 +14,19 @@
 //!
 //! - [`chaos`] — the turn-vs-drain chaos harness that falsifies the race rule
 //!   over thousands of deterministic, seeded interleavings (objective O4).
+//! - [`report`] — the measurement report: per-migration records as a JSON
+//!   artifact in, the `results/report.md` markdown tables out.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod chaos;
 pub mod recorder;
+pub mod report;
 pub mod schedule;
 
 pub use chaos::{RaceReport, simulate};
 pub use recorder::{LatencyRecorder, LatencyStats, RecordError};
+pub use report::{
+    IdleGapBucket, LatencySlice, Methodology, MigrationRecord, RunReport, render_markdown,
+};
 pub use schedule::{Arrivals, Schedule};

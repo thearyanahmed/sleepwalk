@@ -11,6 +11,7 @@ number to be trustworthy.
 | `schedule` | `Schedule` / `Arrivals` — the open-loop arrival schedule (fixed-rate or Poisson), computed up front. Poisson is seeded, so runs reproduce exactly. |
 | `recorder` | `LatencyRecorder` / `LatencyStats` — latency measured from the *intended* send time, aggregated into an HdrHistogram for accurate tail percentiles. |
 | `chaos`    | `simulate` / `RaceReport` — the turn-vs-drain chaos harness. Drops a drain at a random offset into a stream of turns, drives a real `guestd` supervisor through the interleaving, then resumes and replays the backlog, asserting the race rule. |
+| `report`   | `RunReport` / `render_markdown` — per-migration measurement records as a JSON artifact in, the `results/report.md` markdown tables (freeze window, e2e, clean-vs-overlapping turn latency, idle-gap histogram) out. Every number is rendered beside its methodology. |
 
 ## The race-rule chaos harness
 
