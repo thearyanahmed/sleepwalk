@@ -1,7 +1,7 @@
 //! A recording, fault-injecting stand-in for Firecracker, used in tests.
 //!
 //! [`PseudoFirecracker`] implements [`FirecrackerApi`](crate::firecracker::FirecrackerApi)
-//! without a real VM, so the lifecycle logic in [`crate::vm`] is testable
+//! without a live VM, so the lifecycle logic in [`crate::vm`] is testable
 //! without `/dev/kvm`. It records the ordered sequence of operations it received
 //! (so a test can assert hostd issued exactly `boot, pause, resume, shutdown`)
 //! and can be primed to fail the next call to a given operation, to exercise

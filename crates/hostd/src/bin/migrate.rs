@@ -8,7 +8,7 @@
 //!                                  # stream mem+vmstate to B, report timings
 //!
 //! `recv` must be running before `send` connects. Over loopback both run on one
-//! host (`recv 127.0.0.1:9000` then `send 127.0.0.1:9000`); for a real two-host
+//! host (`recv 127.0.0.1:9000` then `send 127.0.0.1:9000`); for a two-host
 //! move, run `recv` on droplet B and point `send` at B's IP. B must have the same
 //! Firecracker, kernel, and rootfs artifacts at the same paths the snapshot
 //! references (CPU-homogeneous hosts — see ADR-004).

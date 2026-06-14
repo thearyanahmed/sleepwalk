@@ -25,7 +25,7 @@ fmt:
     cargo fmt
 
 # Turn-vs-drain race-rule chaos over seeded interleavings. Deterministic, no VM —
-# the fast falsification layer for the race rule; the wall-clock real-VM run is
+# the fast falsification layer for the race rule; the wall-clock KVM run is
 # `chaos-vm` (tier 2). A failure prints the seed that reproduces it.
 chaos:
     cargo test -p harness 'chaos::' -- --nocapture
@@ -80,11 +80,11 @@ uffd-test:
 
 # tier 2 · functional KVM (needs /dev/kvm)
 
-# Single-host real-Firecracker boot lifecycle (needs /dev/kvm + `just fetch`).
+# Single-host Firecracker boot lifecycle (needs /dev/kvm + `just fetch`).
 lifecycle-test:
     cargo test -p hostd --features kvm --test lifecycle -- --nocapture
 
-# Single-host snapshot -> UFFD lazy restore of a real VM (needs /dev/kvm + fetch).
+# Single-host snapshot -> UFFD lazy restore of a live VM (needs /dev/kvm + fetch).
 restore-test:
     cargo test -p hostd --features kvm --test restore -- --nocapture
 
@@ -104,13 +104,13 @@ migrate-send ADDR:
     cargo run -q -p hostd --features kvm --bin migrate -- send {{ADDR}}
 
 # A->B migration with memory streamed over TCP (needs /dev/kvm + `just fetch`).
-# Loopback here; point the sender at another droplet's IP for a real cross-host run.
+# Loopback here; point the sender at another droplet's IP for a cross-host run.
 migrate-test:
     cargo test -p hostd --features kvm --test migrate -- --nocapture
 
-# Turn-vs-drain chaos against real VMs, 100 wall-clock runs.
+# Turn-vs-drain chaos against live VMs, 100 wall-clock runs.
 chaos-vm:
-    @echo "not implemented yet (needs the real-VM tier)" && exit 1
+    @echo "not implemented yet (needs the KVM tier)" && exit 1
 
 # tier 3 · real KVM only (benchmark-valid — refuses TCG)
 

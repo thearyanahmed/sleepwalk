@@ -94,7 +94,7 @@ Validated by the turn-vs-drain chaos test: a drain dropped at random offsets
 across a stream of turns, over many seeded interleavings, asserting (1) every
 attempted turn eventually runs (zero dropped), (2) the `DrainAck`'s `in_flight`
 matches the turn actually running at the drain instant, and (3) no turn starts
-while the gate is closed. The real-VM wall-clock version (100 runs on `/dev/kvm`)
+while the gate is closed. The KVM wall-clock version (100 runs on `/dev/kvm`)
 is the integration-tier counterpart.
 
 ## Secrets

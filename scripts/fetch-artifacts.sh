@@ -50,13 +50,13 @@ k_hash="$(_toml_get "$VERSIONS" kernel "sha256_$ARCH")"
 [[ -n "$k_version" ]] || _die "kernel.version is empty in versions.toml — pin a specific CI kernel build"
 fetch_one "kernel ${k_version}" "$k_url" "$OUT/vmlinux-${k_version}-${ARCH}" "$k_hash"
 
-# CI rootfs — the Ubuntu squashfs the real-VM boot/lifecycle test boots.
+# CI rootfs — the Ubuntu squashfs the KVM boot/lifecycle test boots.
 r_url="$(_toml_get "$VERSIONS" ci_rootfs "url_$ARCH")"
 r_hash="$(_toml_get "$VERSIONS" ci_rootfs "sha256_$ARCH")"
 if [[ -n "$r_url" ]]; then
     fetch_one "ci rootfs" "$r_url" "$OUT/$(basename "$r_url")" "$r_hash"
 else
-    _warn "no ci_rootfs URL pinned for $ARCH — the real-VM lifecycle test needs it"
+    _warn "no ci_rootfs URL pinned for $ARCH — the KVM lifecycle test needs it"
 fi
 
 # summary

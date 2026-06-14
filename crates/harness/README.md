@@ -30,7 +30,7 @@ returns a `RaceReport` checking three invariants:
 Each run is fully determined by its `seed`, so a failure reproduces from the seed
 alone. The bundled test sweeps thousands of seeds and asserts the corpus
 exercises *both* a busy drain and an idle-gap drain (so it can't pass vacuously).
-Run it with `just chaos`. This is the fast mock layer; the wall-clock real-VM
+Run it with `just chaos`. This is the fast mock layer; the wall-clock KVM
 counterpart (100 runs on `/dev/kvm`, `just chaos-vm`) is the integration tier.
 
 ## Why it's built this way: coordinated omission

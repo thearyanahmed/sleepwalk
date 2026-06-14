@@ -1,4 +1,4 @@
-//! Single-host snapshot → UFFD lazy restore of a real VM (needs `/dev/kvm` +
+//! Single-host snapshot → UFFD lazy restore of a live VM (needs `/dev/kvm` +
 //! fetched artifacts). Gated behind `--features kvm`; run with
 //! `just restore-test` on a KVM host after `just fetch`.
 //!

@@ -32,9 +32,9 @@ between hosts. Internal crate.
   leaves `RunState` unchanged, so a failed `boot` keeps the VM `Created` and a
   retry is legal.
 
-## Real Firecracker (needs `/dev/kvm`)
+## Firecracker on KVM
 
-`FcProcess` + the `Firecracker` client boot a real microVM end to end: `just
+`FcProcess` + the `Firecracker` client boot a microVM end to end: `just
 lifecycle-test` (feature `kvm`) spawns Firecracker, configures machine /
 boot-source / rootfs, boots, asserts the guest reaches userspace, then
 pauses/resumes/reaps it.

@@ -44,7 +44,7 @@ sha256_aarch64 = ""
 sha256_x86_64  = ""
 
 [ci_rootfs]
-# Firecracker CI Ubuntu rootfs (squashfs) used by the real-VM boot/lifecycle test
+# Firecracker CI Ubuntu rootfs (squashfs) used by the KVM boot/lifecycle test
 # — read-only, auto-login on ttyS0. Distinct from the synthetic [rootfs] above.
 version = "ubuntu-24.04"
 url_aarch64 = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/aarch64/ubuntu-24.04.squashfs"

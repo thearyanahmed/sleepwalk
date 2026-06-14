@@ -1,7 +1,7 @@
 # hostd — per-host daemon: Firecracker lifecycle, UFFD page server, snapshot
-# transfer. Internal crate. This first slice is the mock-testable core (the
-# FirecrackerApi port + the VM lifecycle orchestrator); the real Firecracker
-# impl and jailer spawn land in a /dev/kvm session.
+# transfer. Internal crate. The logic is mock-testable everywhere; the tests and
+# tools that drive an actual Firecracker process are gated behind the `kvm`
+# feature (need /dev/kvm + fetched artifacts).
 [package]
 name = "hostd"
 version.workspace = true
@@ -13,7 +13,7 @@ description = "sleepwalk per-host daemon (internal crate)."
 publish = false
 
 [features]
-# Integration tests + the migration benchmark that drive a real Firecracker
+# Integration tests + the migration benchmark that drive a Firecracker
 # process; need /dev/kvm and the fetched artifacts. Off by default so unit/mock
 # tests run anywhere.
 kvm = []

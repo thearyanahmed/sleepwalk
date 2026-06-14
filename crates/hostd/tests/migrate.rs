@@ -5,7 +5,7 @@
 //! Unlike `restore.rs` (which restores from the same on-disk snapshot), this
 //! snapshots the source, **streams the memory + vmstate over a TCP socket** into
 //! a separate directory, and restores the target from that received copy via the
-//! UFFD page server — the same path a real two-host move takes. Here both ends
+//! UFFD page server — the same path a two-host move takes. Here both ends
 //! run on one host over loopback; pointing the sender at another droplet's IP is
 //! the only change for a true cross-host migration.
 #![cfg(all(target_os = "linux", feature = "kvm"))]

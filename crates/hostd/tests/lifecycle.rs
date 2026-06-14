@@ -1,9 +1,9 @@
-//! Real single-host Firecracker lifecycle (needs `/dev/kvm` + fetched
+//! Single-host Firecracker lifecycle (needs `/dev/kvm` + fetched
 //! artifacts). Gated behind `--features kvm` so it never runs in the
 //! everywhere unit/mock suite; drive it with `just lifecycle-test` on a Linux
 //! box that has run `just fetch`.
 //!
-//! It spawns a real Firecracker process, configures and boots a microVM through
+//! It spawns a Firecracker process, configures and boots a microVM through
 //! the control client, and asserts the guest reached userspace by watching its
 //! serial console for the login banner — then pauses, resumes, and reaps it.
 #![cfg(all(target_os = "linux", feature = "kvm"))]
@@ -62,7 +62,7 @@ async fn wait_for_serial(log: &Path, needle: &str, timeout: Duration) -> bool {
 }
 
 #[tokio::test]
-async fn boots_a_real_microvm_to_userspace() {
+async fn boots_a_microvm_to_userspace() {
     let art = artifacts_dir();
     let fc_bin = require(&art, "firecracker binary", |n| {
         n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
@@ -111,7 +111,7 @@ async fn boots_a_real_microvm_to_userspace() {
         std::fs::read_to_string(&serial).unwrap_or_default()
     );
 
-    // The lifecycle transitions work against a real VM, not just the mock.
+    // The lifecycle transitions work against a live VM, not just the mock.
     fc.pause().await.expect("pause");
     fc.resume().await.expect("resume");
 

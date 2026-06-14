@@ -45,8 +45,8 @@ CPU, so the whole stack runs at roughly **10–30× slower** than native.
 — snapshot/restore, vsock, UFFD, the FSM, the drain race all *exercise* correctly.
 Any **timing** number from TCG is meaningless and must never be published. The
 benchmark `just` targets refuse to run when they detect TCG; functional targets print
-a "TCG — timing not representative" banner instead. Real measurements come from path
-A, B, or C (real KVM).
+a "TCG — timing not representative" banner instead. Benchmark-valid measurements
+come from path A, B, or C (native KVM).
 
 ### Native KVM vs. TCG, at a glance
 
