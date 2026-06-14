@@ -1,13 +1,14 @@
 # `rebalancer`
 
 The control plane: decides which VM moves where, and drives each migration to
-completion. Internal crate. This first slice is the host-agnostic **migration
-driver** — placement and pressure detection come later.
+completion. Internal crate. This slice covers the host-agnostic **decision**
+(pick-victim heuristic) and the **migration driver**.
 
 ## What's here
 
 | Module            | Contents |
 |-------------------|----------|
+| `placement`       | `Placement` / `Pressure` / `pick_victim` — the pressure-relief heuristic. Picks the most-idle VM on the hottest host and moves it to the coolest host that can take it; returns `None` (rather than guessing) when no move helps. One move at a time. |
 | `executor`        | `MigrationExecutor` — the port for migration effects (`request_drain`, `snapshot`, `transfer`, `restore`, `cutover`, `cleanup`), plus `DrainOutcome` / `ExecError`. |
 | `driver`          | `drive` — walks proto's migration FSM typestate through the executor, returning `MigrationOutcome`. |
 | `pseudo_executor` | `PseudoExecutor` — a recording, fault-injecting stand-in implementing the same trait, for tests. |
