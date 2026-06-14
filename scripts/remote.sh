@@ -1,69 +1,50 @@
 #!/usr/bin/env bash
-# Sync this repo to a remote Linux box (a droplet / Pi with the Linux-only
-# capabilities macOS lacks) and run things on it over SSH. Connection details
-# live in a gitignored .env (copy .env.example -> .env and fill it); nothing
-# host-specific or secret is committed.
+# Sync this repo to a remote Linux box and run things on it over SSH. Pure
+# transport: the connection comes from the environment, so any caller can point
+# it at any host — `scripts/host.sh` resolves a label from .env, or set the vars
+# directly. This script knows nothing about which host it is talking to.
+#
+# Connection (env):
+#   RHOST   (required)   IP or hostname
+#   RUSER   (root)       ssh user
+#   RPORT   (22)         ssh port
+#   RPATH   (sleepwalk)  destination dir under the remote user's home
+#   RKEY                 path to a private key (preferred), OR
+#   RPASS                a password (needs `sshpass`)
 #
 # Usage:
-#   scripts/remote.sh sync                 rsync the repo to the remote
-#   scripts/remote.sh ssh [cmd...]         shell in, or run a one-off command
-#   scripts/remote.sh setup [args...]      sync, then run scripts/setup.sh there
-#   scripts/remote.sh run <just-target>    sync, then `just <target>` there
-#
-# Auth: REMOTE_SSH_KEY (preferred) or REMOTE_PASSWORD (needs `sshpass`).
+#   RHOST=1.2.3.4 RPASS=… scripts/remote.sh sync          rsync the repo over
+#   scripts/remote.sh ssh [cmd...]                        shell in / run a command
+#   scripts/remote.sh setup [args...]                     sync, then scripts/setup.sh
+#   scripts/remote.sh run <just-target> [args...]         sync, then `just <target>`
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-ENV_FILE="$SLEEPWALK_ROOT/.env"
-[[ -f "$ENV_FILE" ]] || _die "no .env — copy .env.example to .env and fill it in"
+RHOST="${RHOST:?RHOST not set — set RHOST/RUSER/… directly or use scripts/host.sh <a|b>}"
+RUSER="${RUSER:-root}"
+RPORT="${RPORT:-22}"
+RPATH="${RPATH:-sleepwalk}"
+RKEY="${RKEY:-}"
+RPASS="${RPASS:-}"
+TARGET="$RUSER@$RHOST"
 
-# Load .env (export every assignment for child processes).
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+# accept-new: trust the host key on first contact, then pin it (MITM protection
+# on every later connection) — unlike the throwaway dev-vm's =no.
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -p "$RPORT")
 
-# Host selection: `remote.sh --host b <cmd>` targets the REMOTE_B_* vars (the
-# second droplet); the default is host A (the REMOTE_* vars).
-if [[ "${1:-}" == "--host" ]]; then
-    case "${2:-}" in
-        a | A) ;;
-        b | B)
-            REMOTE_HOST="${REMOTE_B_HOST:-}"
-            REMOTE_USER="${REMOTE_B_USER:-}"
-            REMOTE_PORT="${REMOTE_B_PORT:-}"
-            REMOTE_PATH="${REMOTE_B_PATH:-}"
-            REMOTE_SSH_KEY="${REMOTE_B_SSH_KEY:-}"
-            REMOTE_PASSWORD="${REMOTE_B_PASSWORD:-}"
-            ;;
-        *) _die "unknown --host '${2:-}' (use a or b)" ;;
-    esac
-    shift 2
-fi
-
-: "${REMOTE_HOST:?set REMOTE_HOST (or REMOTE_B_HOST with --host b) in .env}"
-REMOTE_USER="${REMOTE_USER:-root}"
-REMOTE_PORT="${REMOTE_PORT:-22}"
-REMOTE_PATH="${REMOTE_PATH:-sleepwalk}"
-TARGET="$REMOTE_USER@$REMOTE_HOST"
-
-# accept-new: trust the host key on first contact, then pin it (real MITM
-# protection on every later connection) — unlike the throwaway dev-vm's =no.
-SSH_OPTS=(-o StrictHostKeyChecking=accept-new -p "$REMOTE_PORT")
-
-if [[ -n "${REMOTE_SSH_KEY:-}" ]]; then
-    key="${REMOTE_SSH_KEY/#\~/$HOME}"   # expand a leading ~
-    [[ -f "$key" ]] || _die "REMOTE_SSH_KEY not found: $key"
+if [[ -n "$RKEY" ]]; then
+    key="${RKEY/#\~/$HOME}" # expand a leading ~
+    [[ -f "$key" ]] || _die "RKEY not found: $key"
     SSH_OPTS+=(-i "$key")
     SSH=(ssh "${SSH_OPTS[@]}")
-elif [[ -n "${REMOTE_PASSWORD:-}" ]]; then
+elif [[ -n "$RPASS" ]]; then
     _need sshpass "install it (macOS: brew install sshpass; Debian: apt install sshpass)"
-    _warn "password auth in use — after first login run 'ssh-copy-id' and switch to REMOTE_SSH_KEY"
+    _warn "password auth in use — after first login run 'ssh-copy-id' and switch to RKEY"
     # -e reads the password from $SSHPASS, so it never appears in argv / ps.
-    export SSHPASS="$REMOTE_PASSWORD"
+    export SSHPASS="$RPASS"
     SSH=(sshpass -e ssh "${SSH_OPTS[@]}")
 else
-    _die "set REMOTE_SSH_KEY or REMOTE_PASSWORD in .env"
+    _die "set RKEY or RPASS for $TARGET"
 fi
 
 cmd_ssh() { "${SSH[@]}" "$TARGET" "$@"; }
@@ -81,10 +62,10 @@ cmd_sync() {
     exfile="$(mktemp)"
     # shellcheck disable=SC2064
     trap "rm -f '$exfile'" RETURN
-    ( cd "$SLEEPWALK_ROOT" && git ls-files -o -i --exclude-standard --directory ) >"$exfile" \
+    (cd "$SLEEPWALK_ROOT" && git ls-files -o -i --exclude-standard --directory) >"$exfile" \
         || _die "could not enumerate ignored files (is this a git repo?)"
 
-    _log "syncing repo -> $TARGET:$REMOTE_PATH/"
+    _log "syncing repo -> $TARGET:$RPATH/"
     # Plain --delete (not --delete-excluded): the remote is mirrored for tracked
     # files, but its own ignored build dir (target/) is left intact for fast
     # incremental rebuilds. .git and any .env are excluded belt-and-suspenders.
@@ -93,14 +74,14 @@ cmd_sync() {
         --exclude '.env' \
         --exclude '*.env' \
         --exclude-from="$exfile" \
-        "$SLEEPWALK_ROOT/" "$TARGET:$REMOTE_PATH/"
+        "$SLEEPWALK_ROOT/" "$TARGET:$RPATH/"
     _log "sync done"
 }
 
 cmd_setup() {
     cmd_sync
     _log "running scripts/setup.sh on $TARGET"
-    cmd_ssh "cd '$REMOTE_PATH' && scripts/setup.sh $*"
+    cmd_ssh "cd '$RPATH' && scripts/setup.sh $*"
 }
 
 cmd_run() {
@@ -110,13 +91,22 @@ cmd_run() {
     # A non-interactive ssh shell does not source ~/.profile, so cargo/just in
     # ~/.cargo/bin are off PATH; source the cargo env first. \$HOME is escaped so
     # it expands on the remote, not here.
-    cmd_ssh "cd '$REMOTE_PATH' && { [ -f \"\$HOME/.cargo/env\" ] && . \"\$HOME/.cargo/env\"; }; just $*"
+    cmd_ssh "cd '$RPATH' && { [ -f \"\$HOME/.cargo/env\" ] && . \"\$HOME/.cargo/env\"; }; just $*"
 }
 
 case "${1:-}" in
-    sync)  cmd_sync ;;
-    ssh)   shift; cmd_ssh "$@" ;;
-    setup) shift; cmd_setup "$@" ;;
-    run)   shift; cmd_run "$@" ;;
-    *)     _die "usage: remote.sh {sync | ssh [cmd] | setup [args] | run <just-target>}" ;;
+    sync) cmd_sync ;;
+    ssh)
+        shift
+        cmd_ssh "$@"
+        ;;
+    setup)
+        shift
+        cmd_setup "$@"
+        ;;
+    run)
+        shift
+        cmd_run "$@"
+        ;;
+    *) _die "usage: remote.sh {sync | ssh [cmd] | setup [args] | run <just-target>}" ;;
 esac

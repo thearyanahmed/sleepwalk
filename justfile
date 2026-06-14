@@ -55,23 +55,24 @@ dev-vm-setup:
 up:
     @echo "not implemented yet (first-microvm: boot a VM by hand)" && exit 1
 
-# remote · drive a Linux box over SSH (config in gitignored .env)
+# remote · drive host A over SSH (config in gitignored .env). For host B use
+# `scripts/host.sh b <cmd>`; remote.sh itself is host-agnostic.
 
-# Sync the working tree to the remote (copy .env.example -> .env first).
+# Sync the working tree to host A (copy .env.example -> .env first).
 remote-sync:
-    scripts/remote.sh sync
+    scripts/host.sh a sync
 
-# Shell into the remote, or run a one-off command: `just remote-ssh 'nproc'`.
+# Shell into host A, or run a one-off command: `just remote-ssh 'nproc'`.
 remote-ssh *CMD:
-    scripts/remote.sh ssh {{CMD}}
+    scripts/host.sh a ssh {{CMD}}
 
-# Sync, then provision the remote (scripts/setup.sh).
+# Sync, then provision host A (scripts/setup.sh).
 remote-setup *ARGS:
-    scripts/remote.sh setup {{ARGS}}
+    scripts/host.sh a setup {{ARGS}}
 
-# Sync, then run a just target on the remote: `just remote-run test`.
+# Sync, then run a just target on host A: `just remote-run test`.
 remote-run TARGET:
-    scripts/remote.sh run {{TARGET}}
+    scripts/host.sh a run {{TARGET}}
 
 # UFFD lazy-restore page server. Needs Linux (userfaultfd) but NOT KVM, so it
 # runs on any Linux box: `just remote-run uffd-test`.
