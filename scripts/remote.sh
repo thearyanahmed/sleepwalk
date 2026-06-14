@@ -89,7 +89,10 @@ cmd_run() {
     [[ $# -ge 1 ]] || _die "usage: remote.sh run <just-target> [args...]"
     cmd_sync
     _log "running 'just $*' on $TARGET"
-    cmd_ssh "cd '$REMOTE_PATH' && just $*"
+    # A non-interactive ssh shell does not source ~/.profile, so cargo/just in
+    # ~/.cargo/bin are off PATH; source the cargo env first. \$HOME is escaped so
+    # it expands on the remote, not here.
+    cmd_ssh "cd '$REMOTE_PATH' && { [ -f \"\$HOME/.cargo/env\" ] && . \"\$HOME/.cargo/env\"; }; just $*"
 }
 
 case "${1:-}" in
