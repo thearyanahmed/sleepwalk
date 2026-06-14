@@ -23,7 +23,25 @@ set -a
 source "$ENV_FILE"
 set +a
 
-: "${REMOTE_HOST:?set REMOTE_HOST in .env}"
+# Host selection: `remote.sh --host b <cmd>` targets the REMOTE_B_* vars (the
+# second droplet); the default is host A (the REMOTE_* vars).
+if [[ "${1:-}" == "--host" ]]; then
+    case "${2:-}" in
+        a | A) ;;
+        b | B)
+            REMOTE_HOST="${REMOTE_B_HOST:-}"
+            REMOTE_USER="${REMOTE_B_USER:-}"
+            REMOTE_PORT="${REMOTE_B_PORT:-}"
+            REMOTE_PATH="${REMOTE_B_PATH:-}"
+            REMOTE_SSH_KEY="${REMOTE_B_SSH_KEY:-}"
+            REMOTE_PASSWORD="${REMOTE_B_PASSWORD:-}"
+            ;;
+        *) _die "unknown --host '${2:-}' (use a or b)" ;;
+    esac
+    shift 2
+fi
+
+: "${REMOTE_HOST:?set REMOTE_HOST (or REMOTE_B_HOST with --host b) in .env}"
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
 REMOTE_PATH="${REMOTE_PATH:-sleepwalk}"
