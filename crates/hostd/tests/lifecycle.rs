@@ -51,10 +51,10 @@ fn require(dir: &Path, what: &str, pick: impl Fn(&str) -> bool + Copy) -> PathBu
 async fn wait_for_serial(log: &Path, needle: &str, timeout: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
-        if let Ok(text) = std::fs::read_to_string(log) {
-            if text.contains(needle) {
-                return true;
-            }
+        if let Ok(text) = std::fs::read_to_string(log)
+            && text.contains(needle)
+        {
+            return true;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

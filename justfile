@@ -88,6 +88,12 @@ lifecycle-test:
 restore-test:
     cargo test -p hostd --features real-vm --test restore -- --nocapture
 
+# Migration freeze-window benchmark: boot once, ping-pong N migrations, record
+# each timing + min/max/mean as JSON. Tunable via SLEEPWALK_BENCH_CYCLES /
+# SLEEPWALK_BENCH_SETTLE_MS. Needs /dev/kvm + `just fetch`.
+migrate-bench:
+    cargo run -q -p hostd --features real-vm --bin migrate-bench
+
 # Two-host A->B migration.
 migrate-test:
     @echo "not implemented yet (two-host migration)" && exit 1

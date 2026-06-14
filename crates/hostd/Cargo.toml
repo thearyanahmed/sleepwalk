@@ -13,14 +13,21 @@ description = "sleepwalk per-host daemon (internal crate)."
 publish = false
 
 [features]
-# Integration tests that drive a real Firecracker process; need /dev/kvm and the
-# fetched artifacts. Off by default so unit/mock tests run anywhere.
+# Integration tests + the migration benchmark that drive a real Firecracker
+# process; need /dev/kvm and the fetched artifacts. Off by default so unit/mock
+# tests run anywhere.
 real-vm = []
+
+# Migration freeze-window benchmark; built only with the real-vm feature.
+[[bin]]
+name = "migrate-bench"
+path = "src/bin/migrate_bench.rs"
+required-features = ["real-vm"]
 
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "fs", "io-util"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "fs", "io-util", "time"] }
 hyper = { workspace = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 http-body-util.workspace = true
