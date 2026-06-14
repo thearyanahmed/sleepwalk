@@ -42,6 +42,11 @@ fc_hash="$(_toml_get "$VERSIONS" firecracker "sha256_$ARCH")"
 # Canonical release URL layout: firecracker-<ver>-<arch>.tgz from the GitHub release.
 fc_url="https://github.com/firecracker-microvm/firecracker/releases/download/${fc_version}/firecracker-${fc_version}-${ARCH}.tgz"
 fetch_one "firecracker ${fc_version}" "$fc_url" "$OUT/firecracker-${fc_version}-${ARCH}.tgz" "$fc_hash"
+# Unpack the binary from the verified tarball so callers find an executable, not
+# a .tgz (idempotent — re-extracting overwrites in place).
+_need tar
+tar xzf "$OUT/firecracker-${fc_version}-${ARCH}.tgz" -C "$OUT"
+_log "unpacked firecracker binary"
 
 # guest kernel
 k_version="$(_toml_get "$VERSIONS" kernel version)"
