@@ -10,12 +10,12 @@ set -euo pipefail
 SLEEPWALK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 export SLEEPWALK_ROOT
 
-# ── logging ────────────────────────────────────────────────────────────────
+# logging
 _log()  { printf '\033[1;34m[sleepwalk]\033[0m %s\n' "$*" >&2; }
 _warn() { printf '\033[1;33m[sleepwalk] warn:\033[0m %s\n' "$*" >&2; }
 _die()  { printf '\033[1;31m[sleepwalk] error:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# ── platform ─────────────────────────────────────────────────────────────────
+# platform
 _os()   { uname -s; }   # Darwin | Linux
 _arch() {               # normalise to Firecracker/kernel naming
     case "$(uname -m)" in
@@ -32,7 +32,7 @@ _need() {
     _die "missing required tool: $cmd${hint:+ — $hint}"
 }
 
-# ── checksums (portable across macOS `shasum` and Linux `sha256sum`) ──────────
+# checksums (portable across macOS `shasum` and Linux `sha256sum`)
 _sha256() {
     local f="$1"
     if command -v sha256sum >/dev/null 2>&1; then
@@ -59,7 +59,7 @@ _verify_sha256() {
     _log "verified $(basename "$f")"
 }
 
-# ── minimal TOML reader ──────────────────────────────────────────────────────
+# minimal TOML reader
 # Reads `key = "value"` (or bare value) under a `[section]` from a flat TOML
 # file. Good enough for images/versions.toml; not a general TOML parser.
 _toml_get() {

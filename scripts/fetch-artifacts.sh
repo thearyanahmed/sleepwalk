@@ -35,7 +35,7 @@ fetch_one() {
     fi
 }
 
-# ── Firecracker binary ───────────────────────────────────────────────────────
+# Firecracker binary
 fc_version="$(_toml_get "$VERSIONS" firecracker version)"
 [[ -n "$fc_version" ]] || _die "firecracker.version is empty in versions.toml — verify against GitHub releases and pin it"
 fc_hash="$(_toml_get "$VERSIONS" firecracker "sha256_$ARCH")"
@@ -43,14 +43,14 @@ fc_hash="$(_toml_get "$VERSIONS" firecracker "sha256_$ARCH")"
 fc_url="https://github.com/firecracker-microvm/firecracker/releases/download/${fc_version}/firecracker-${fc_version}-${ARCH}.tgz"
 fetch_one "firecracker ${fc_version}" "$fc_url" "$OUT/firecracker-${fc_version}-${ARCH}.tgz" "$fc_hash"
 
-# ── guest kernel ─────────────────────────────────────────────────────────────
+# guest kernel
 k_version="$(_toml_get "$VERSIONS" kernel version)"
 k_url="$(_toml_get "$VERSIONS" kernel "url_$ARCH")"
 k_hash="$(_toml_get "$VERSIONS" kernel "sha256_$ARCH")"
 [[ -n "$k_version" ]] || _die "kernel.version is empty in versions.toml — pin a specific CI kernel build"
 fetch_one "kernel ${k_version}" "$k_url" "$OUT/vmlinux-${k_version}-${ARCH}" "$k_hash"
 
-# ── summary ──────────────────────────────────────────────────────────────────
+# summary
 if [[ "$unpinned" -eq 1 ]]; then
     cat >&2 <<EOF
 

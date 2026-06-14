@@ -25,7 +25,7 @@ SSH_PORT=2222
 EDK2_CODE="$(brew --prefix qemu 2>/dev/null)/share/qemu/edk2-aarch64-code.fd"
 [[ -f "$EDK2_CODE" ]] || EDK2_CODE="/usr/share/qemu/edk2-aarch64-code.fd"
 
-# ── subcommand: ssh ──────────────────────────────────────────────────────────
+# subcommand: ssh
 if [[ "${1:-}" == "ssh" ]]; then
     shift
     exec ssh -p "$SSH_PORT" \
@@ -37,14 +37,14 @@ _need qemu-system-aarch64 "brew install qemu"
 _need qemu-img "brew install qemu"
 _need ssh-keygen
 
-# ── ssh key (guest gets the pubkey via cloud-init) ───────────────────────────
+# ssh key (guest gets the pubkey via cloud-init)
 if [[ ! -f "$WORK/dev-vm-key" ]]; then
     _log "generating dev-vm ssh key"
     ssh-keygen -t ed25519 -N "" -f "$WORK/dev-vm-key" -C "sleepwalk-dev-vm" >/dev/null
 fi
 PUBKEY="$(cat "$WORK/dev-vm-key.pub")"
 
-# ── base cloud image ─────────────────────────────────────────────────────────
+# base cloud image
 if [[ ! -f "$BASE_IMG" ]]; then
     img_url="$(_toml_get "$SLEEPWALK_ROOT/images/versions.toml" dev_vm ubuntu_img_aarch64)"
     [[ -n "$img_url" ]] || _die "dev_vm.ubuntu_img_aarch64 not pinned in versions.toml — set the cloud image URL"
@@ -55,13 +55,13 @@ if [[ ! -f "$BASE_IMG" ]]; then
     mv "$BASE_IMG.partial" "$BASE_IMG"
 fi
 
-# ── writable overlay (reset = delete this) ───────────────────────────────────
+# writable overlay (reset = delete this)
 if [[ ! -f "$OVERLAY" ]]; then
     _log "creating overlay disk (40G sparse)"
     qemu-img create -f qcow2 -F qcow2 -b "$BASE_IMG" "$OVERLAY" 40G >/dev/null
 fi
 
-# ── cloud-init seed (NoCloud) ────────────────────────────────────────────────
+# cloud-init seed (NoCloud)
 if [[ ! -f "$SEED" ]]; then
     _log "building cloud-init seed"
     tmp="$(mktemp -d)"
@@ -82,14 +82,14 @@ EOF
     rm -rf "$tmp"
 fi
 
-# ── writable UEFI vars ───────────────────────────────────────────────────────
+# writable UEFI vars
 [[ -f "$EDK2_CODE" ]] || _die "edk2 UEFI firmware not found ($EDK2_CODE) — is qemu installed?"
 if [[ ! -f "$VARS" ]]; then
     # virt pflash banks are 64MiB each; vars must match the code bank size.
     dd if=/dev/zero of="$VARS" bs=1m count=64 2>/dev/null
 fi
 
-# ── launch ───────────────────────────────────────────────────────────────────
+# launch
 _log "booting dev VM under TCG (emulated EL2) — this is SLOW (minutes), be patient"
 _log "ssh: scripts/dev-vm.sh ssh   (or: just dev-vm-ssh)   port $SSH_PORT"
 exec qemu-system-aarch64 \

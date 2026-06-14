@@ -12,7 +12,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 [[ "$(_os)" == "Linux" ]] || _die "setup.sh runs inside the Linux guest/host, not on $(_os)"
 
-# ── the gate: /dev/kvm ───────────────────────────────────────────────────────
+# the gate: /dev/kvm
 # Set SLEEPWALK_SKIP_KVM=1 to provision a box that only needs the build toolchain
 # and the userfaultfd page-server work, which require Linux but not KVM.
 if [[ "${SLEEPWALK_SKIP_KVM:-}" == "1" ]]; then
@@ -33,7 +33,7 @@ else
     fi
 fi
 
-# ── runtime deps ─────────────────────────────────────────────────────────────
+# runtime deps
 # Firecracker ships as a static binary, so no build toolchain — just fetch/unpack
 # and a couple of OS tools; tap/NAT networking deps come with two-host migration.
 #
@@ -66,7 +66,7 @@ else
         "${missing_pkgs[@]}" >/dev/null
 fi
 
-# ── build toolchain (Rust + just) ─────────────────────────────────────────────
+# build toolchain (Rust + just)
 # Needed to compile the workspace on this box. The exact toolchain version and
 # components (clippy, rustfmt) are pinned in rust-toolchain.toml, so rustup
 # installs them on the first cargo invocation in the repo — here we only need
@@ -91,7 +91,7 @@ else
         | bash -s -- --to "$HOME/.cargo/bin" >/dev/null
 fi
 
-# ── report ───────────────────────────────────────────────────────────────────
+# report
 cat <<EOF
 
 $(_log "host ready")

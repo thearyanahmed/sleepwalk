@@ -10,7 +10,7 @@
 default:
     @just --list
 
-# ── tier 1 · host-agnostic ────────────────────────────────────────────────
+# tier 1 · host-agnostic
 
 # Unit + mock tests. Runs on any machine including macOS native.
 test:
@@ -30,7 +30,7 @@ fmt:
 chaos:
     cargo test -p harness 'chaos::' -- --nocapture
 
-# ── environment & artifacts ───────────────────────────────────────────────
+# environment & artifacts
 
 # Download + checksum pinned Firecracker binary and kernel.
 fetch:
@@ -55,7 +55,7 @@ dev-vm-setup:
 up:
     @echo "not implemented yet (first-microvm: boot a VM by hand)" && exit 1
 
-# ── remote · drive a Linux box over SSH (config in gitignored .env) ───────
+# remote · drive a Linux box over SSH (config in gitignored .env)
 
 # Sync the working tree to the remote (copy .env.example -> .env first).
 remote-sync:
@@ -73,7 +73,7 @@ remote-setup *ARGS:
 remote-run TARGET:
     scripts/remote.sh run {{TARGET}}
 
-# ── tier 2 · functional KVM (needs /dev/kvm) ──────────────────────────────
+# tier 2 · functional KVM (needs /dev/kvm)
 
 # Single-host snapshot/restore lifecycle.
 lifecycle-test:
@@ -87,7 +87,7 @@ migrate-test:
 chaos-vm:
     @echo "not implemented yet (needs the real-VM tier)" && exit 1
 
-# ── tier 3 · real KVM only (benchmark-valid — refuses TCG) ─────────────────
+# tier 3 · real KVM only (benchmark-valid — refuses TCG)
 
 # O2 freeze-window table vs RAM size.
 bench-restore:
