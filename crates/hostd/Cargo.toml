@@ -24,6 +24,12 @@ name = "migrate-bench"
 path = "src/bin/migrate_bench.rs"
 required-features = ["real-vm"]
 
+# Two-process A->B migration: `migrate send <addr>` / `migrate recv <addr>`.
+[[bin]]
+name = "migrate"
+path = "src/bin/migrate.rs"
+required-features = ["real-vm"]
+
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
