@@ -25,6 +25,7 @@ hyper = { workspace = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 http-body-util.workspace = true
 bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 crc32fast.workspace = true
 
@@ -34,6 +35,7 @@ crc32fast.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 userfaultfd = "0.8"
 libc = "0.2"
+nix = { version = "0.27", features = ["socket", "uio"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "io-util", "rt-multi-thread"] }

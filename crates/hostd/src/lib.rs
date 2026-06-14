@@ -48,5 +48,8 @@ pub use quiesce::{
 pub use statedir::VmDir;
 pub use transfer::{OutboundFile, TransferError, recv_files, send_files};
 #[cfg(target_os = "linux")]
-pub use uffd::{FilePageSource, PageFaultServer, PageSource, UffdError, create_uffd};
+pub use uffd::{
+    FilePageSource, GuestRegionUffdMapping, PageFaultServer, PageSource, UffdError,
+    UffdRestoreHandler, create_uffd,
+};
 pub use vm::{LifecycleError, RunState, Vm};

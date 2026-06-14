@@ -36,11 +36,18 @@ between hosts. Internal crate.
 
 `FcProcess` + the `Firecracker` client boot a real microVM end to end: `just
 lifecycle-test` (feature `real-vm`) spawns Firecracker, configures machine /
-boot-source / rootfs, boots, and asserts the guest reaches userspace, then
-pauses/resumes/reaps it. Run it on a KVM host after `just fetch`. Still to come:
-jailer confinement, snapshot→UFFD-restore wired to the page server, and the
-two-host migration. `shutdown` issues `SendCtrlAltDel` (x86 graceful power-off);
-aarch64 process-reaping uses the `FcProcess` kill path.
+boot-source / rootfs, boots, asserts the guest reaches userspace, then
+pauses/resumes/reaps it.
+
+**Snapshot → UFFD lazy restore works** (`just restore-test`): boot → pause →
+`create_snapshot`, then restore a fresh Firecracker with `mem_backend = Uffd`,
+its guest memory served lazily by `UffdRestoreHandler` from the snapshot file —
+the restored VM resumes and stays alive. This is the core of zero-downtime
+relocation, proven on a single host.
+
+Run both on a KVM host after `just fetch`. Still to come: jailer confinement and
+the two-host migration. `shutdown` issues `SendCtrlAltDel` (x86 graceful
+power-off); aarch64 process-reaping uses the `FcProcess` kill path.
 
 ## Testing it in isolation
 

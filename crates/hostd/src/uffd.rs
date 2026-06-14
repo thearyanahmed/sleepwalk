@@ -20,11 +20,16 @@
 
 use std::ffi::c_void;
 use std::fs::File;
-use std::io;
-use std::os::fd::AsRawFd;
+use std::io::{self, IoSliceMut};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::fs::FileExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
+use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+use serde::Deserialize;
 use thiserror::Error;
 use userfaultfd::{Event, Uffd, UffdBuilder};
 
@@ -108,6 +113,17 @@ pub enum UffdError {
         /// One past the region end.
         end: usize,
     },
+
+    /// A fault address matched none of the memory regions Firecracker sent.
+    #[error("fault at {addr:#x} matched no Firecracker memory region")]
+    NoRegion {
+        /// The faulting address.
+        addr: u64,
+    },
+
+    /// The UFFD handshake message from Firecracker was malformed.
+    #[error("firecracker uffd handshake: {0}")]
+    Handshake(String),
 }
 
 /// Serves missing-page faults for one registered guest memory region.
@@ -232,6 +248,209 @@ pub fn create_uffd() -> Result<Uffd, UffdError> {
         .create()?)
 }
 
+/// One guest memory region, exactly as Firecracker describes it over the UFFD
+/// socket on restore. **The field names are a wire contract with Firecracker
+/// v1.16** (`GuestRegionUffdMapping`) — do not rename them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuestRegionUffdMapping {
+    /// Base address of the region in Firecracker's virtual address space.
+    pub base_host_virt_addr: u64,
+    /// Region length in bytes.
+    pub size: usize,
+    /// The region's offset within the snapshot memory file.
+    pub offset: u64,
+    /// The region's page size in bytes.
+    pub page_size: usize,
+}
+
+impl GuestRegionUffdMapping {
+    /// Whether `addr` falls within this region.
+    #[must_use]
+    fn contains(&self, addr: u64) -> bool {
+        addr >= self.base_host_virt_addr && addr < self.base_host_virt_addr + self.size as u64
+    }
+
+    /// The snapshot-file offset backing `addr` (which must be within the region).
+    #[must_use]
+    fn file_offset(&self, addr: u64) -> u64 {
+        self.offset + (addr - self.base_host_virt_addr)
+    }
+}
+
+/// Serves Firecracker's lazy-restore page faults over a Unix socket.
+///
+/// Firecracker's restore protocol (v1.16): the handler binds and listens on a
+/// Unix socket; when `load_snapshot` runs with `mem_backend = Uffd`, Firecracker
+/// connects and sends one message — the guest memory layout as JSON
+/// (`Vec<GuestRegionUffdMapping>`) plus its userfaultfd as an `SCM_RIGHTS`
+/// ancillary fd. From there it is the same loop as [`PageFaultServer`], but the
+/// pages come from the snapshot memory file at `region.offset + (addr - base)`,
+/// across several regions.
+pub struct UffdRestoreHandler {
+    listener: UnixListener,
+}
+
+impl UffdRestoreHandler {
+    /// Bind and listen on `socket`. Do this **before** `load_snapshot`, so the
+    /// socket exists when Firecracker connects.
+    ///
+    /// # Errors
+    /// If the socket cannot be bound.
+    pub fn bind(socket: &Path) -> io::Result<Self> {
+        let _ = std::fs::remove_file(socket);
+        let listener = UnixListener::bind(socket)?;
+        listener.set_nonblocking(true)?;
+        Ok(Self { listener })
+    }
+
+    /// Accept Firecracker's connection, receive its uffd + memory layout, and
+    /// serve faults from `mem_file` until `stop` is set.
+    ///
+    /// # Errors
+    /// If the handshake, an event read, a source read, or a copy/zero op fails.
+    pub fn serve(&self, mem_file: &Path, stop: &AtomicBool) -> Result<(), UffdError> {
+        let stream = match self.accept(stop)? {
+            Some(stream) => stream,
+            None => return Ok(()), // stopped before Firecracker connected
+        };
+        let (uffd, mappings) = recv_uffd_and_mappings(&stream)?;
+        let mem = File::open(mem_file)?;
+        let page = page_size();
+
+        let mut pfd = libc::pollfd {
+            fd: uffd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        while !stop.load(Ordering::Acquire) {
+            // SAFETY: pfd points to one valid pollfd; poll only reads/writes it.
+            let ready = unsafe { libc::poll(&mut pfd, 1, 200) };
+            if ready < 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err.into());
+            }
+            if ready == 0 {
+                continue;
+            }
+            while let Some(event) = uffd.read_event()? {
+                match event {
+                    Event::Pagefault { addr, .. } => {
+                        serve_fault(&uffd, &mappings, &mem, page, addr as u64)?;
+                    }
+                    Event::Remove { start, end } => {
+                        let len = end as usize - start as usize;
+                        // SAFETY: [start, end) is a range Firecracker removed from
+                        // a registered region; zeropage re-backs it with zeros.
+                        unsafe {
+                            uffd.zeropage(start, len, true)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn accept(&self, stop: &AtomicBool) -> Result<Option<UnixStream>, UffdError> {
+        loop {
+            if stop.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            match self.listener.accept() {
+                Ok((stream, _)) => return Ok(Some(stream)),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+}
+
+/// Resolve one Firecracker fault: locate the region, read the page from the
+/// snapshot file, and copy it into the faulting address.
+fn serve_fault(
+    uffd: &Uffd,
+    mappings: &[GuestRegionUffdMapping],
+    mem: &File,
+    page: usize,
+    addr: u64,
+) -> Result<(), UffdError> {
+    let aligned = addr & !(page as u64 - 1);
+    let region = mappings
+        .iter()
+        .find(|m| m.contains(aligned))
+        .ok_or(UffdError::NoRegion { addr: aligned })?;
+    let mut buf = vec![0u8; page];
+    let n = mem.read_at(&mut buf, region.file_offset(aligned))?;
+    if n < page {
+        buf[n..].fill(0);
+    }
+    // SAFETY: `aligned` is page-aligned and within `region` (which Firecracker
+    // registered with this uffd); `buf` is exactly one page.
+    unsafe {
+        uffd.copy(buf.as_ptr().cast(), aligned as *mut c_void, page, true)?;
+    }
+    Ok(())
+}
+
+/// Receive Firecracker's UFFD handshake: the memory-layout JSON in the message
+/// body and its userfaultfd as an `SCM_RIGHTS` ancillary fd.
+fn recv_uffd_and_mappings(
+    stream: &UnixStream,
+) -> Result<(Uffd, Vec<GuestRegionUffdMapping>), UffdError> {
+    let mut buf = vec![0u8; 4096];
+    let raw_fd;
+    let n;
+    {
+        let mut iov = [IoSliceMut::new(&mut buf)];
+        let mut cmsg = nix::cmsg_space!([RawFd; 1]);
+        let msg = recvmsg::<()>(
+            stream.as_raw_fd(),
+            &mut iov,
+            Some(&mut cmsg),
+            MsgFlags::empty(),
+        )
+        .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+        let mut fd = None;
+        for cmsg in msg.cmsgs() {
+            if let ControlMessageOwned::ScmRights(fds) = cmsg {
+                fd = fds.first().copied();
+            }
+        }
+        raw_fd = fd.ok_or_else(|| {
+            UffdError::Handshake("no userfaultfd in SCM_RIGHTS message".to_owned())
+        })?;
+        n = msg.bytes;
+    }
+    let body = std::str::from_utf8(&buf[..n])
+        .map_err(|e| UffdError::Handshake(format!("memory layout not UTF-8: {e}")))?;
+    let mappings: Vec<GuestRegionUffdMapping> = serde_json::from_str(body)
+        .map_err(|e| UffdError::Handshake(format!("parse memory layout: {e}")))?;
+
+    set_nonblocking(raw_fd);
+    // SAFETY: `raw_fd` is the userfaultfd Firecracker just passed us over
+    // SCM_RIGHTS; we now own it and wrap it once.
+    let uffd = unsafe { Uffd::from_raw_fd(raw_fd) };
+    Ok((uffd, mappings))
+}
+
+/// Put `fd` into non-blocking mode so `read_event` returns `None` instead of
+/// blocking — the poll loop relies on this (a blocking read + poll deadlocks).
+fn set_nonblocking(fd: RawFd) {
+    // SAFETY: fcntl on a valid fd; F_GETFL/F_SETFL have no memory effects.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags >= 0 {
+            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -354,6 +573,34 @@ mod tests {
             let _ = std::fs::remove_file(&self.path);
         }
     }
+    /// The region arithmetic: containment and the snapshot-file offset for a
+    /// faulting address (`offset + (addr - base)`).
+    #[test]
+    fn region_maps_fault_address_to_file_offset() {
+        let region = GuestRegionUffdMapping {
+            base_host_virt_addr: 0x1000,
+            size: 0x4000,
+            offset: 0x8000,
+            page_size: 4096,
+        };
+        assert!(region.contains(0x1000));
+        assert!(region.contains(0x4fff));
+        assert!(!region.contains(0xfff));
+        assert!(!region.contains(0x5000));
+        // A page two pages into the region maps two pages into its file slice.
+        assert_eq!(region.file_offset(0x3000), 0x8000 + 0x2000);
+    }
+
+    /// The layout JSON Firecracker sends parses into the mapping vec.
+    #[test]
+    fn firecracker_layout_json_parses() {
+        let json = r#"[{"base_host_virt_addr":4096,"size":16384,"offset":0,"page_size":4096}]"#;
+        let mappings: Vec<GuestRegionUffdMapping> = serde_json::from_str(json).expect("parse");
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].base_host_virt_addr, 4096);
+        assert_eq!(mappings[0].size, 16384);
+    }
+
     fn tempfile_in_cwd() -> TmpFile {
         // SAFETY: getpid is always safe.
         let pid = unsafe { libc::getpid() };

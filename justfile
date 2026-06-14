@@ -84,6 +84,10 @@ uffd-test:
 lifecycle-test:
     cargo test -p hostd --features real-vm --test lifecycle -- --nocapture
 
+# Single-host snapshot -> UFFD lazy restore of a real VM (needs /dev/kvm + fetch).
+restore-test:
+    cargo test -p hostd --features real-vm --test restore -- --nocapture
+
 # Two-host A->B migration.
 migrate-test:
     @echo "not implemented yet (two-host migration)" && exit 1
