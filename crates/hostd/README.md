@@ -14,6 +14,7 @@ between hosts. Internal crate.
 | `quiesce`            | `QuiescenceDetector` — the layered O3 predicate: app (gated + idle) + infra (vCPU quiet N samples + queues) + storage (sync caught up). Quiescent only when all three agree; defaults to *not* quiescent. Layer inputs are fed from the edges; the logic is pure. |
 | `drain`              | `DrainCoordinator` — the host half of the drain protocol. Folds the guest's `DrainAck`/turn signals off the wire plus locally-sampled infra/storage state into a `DrainVerdict` (`Quiescent` or `Busy { in_flight }`). A pure folder, so the decision tests without a clock or socket; the async recv/sample/deadline loop belongs to the executor. |
 | `uffd` *(Linux)*     | `PageFaultServer` — the lazy-restore page server. Registers the guest memory region with `userfaultfd`, then serves each page fault from the snapshot file (`UFFDIO_COPY`) or a zero page for a hole, on a dedicated thread. Holds the crate's only `unsafe`. Linux-only (cfg'd out on macOS); tested without a VM by faulting an anonymous region. `just uffd-test`. |
+| `process`            | `FcProcess` — spawns the `firecracker` binary on its own API socket, redirects the guest serial console to a log, waits for the socket before returning, and kills+reaps on drop. The plain-spawn path; jailer confinement is later. |
 | `statedir`           | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
 | `transfer`           | `send_files`/`recv_files` — stream snapshot files between hosts, framed and chunked with a per-file CRC32. Transport-agnostic (works over any stream), tested over an in-memory buffer with real temp files. |
 
@@ -31,13 +32,15 @@ between hosts. Internal crate.
   leaves `RunState` unchanged, so a failed `boot` keeps the VM `Created` and a
   retry is legal.
 
-## Not here yet (needs `/dev/kvm`)
+## Real Firecracker (needs `/dev/kvm`)
 
-`Firecracker` speaks the API, but jailer spawn + process teardown and the end-to-end
-test against a *real* Firecracker require a Linux host with KVM. They land in a
-later slice, exercised by `just lifecycle-test`. `shutdown` currently issues
-`SendCtrlAltDel` (x86 graceful power-off); aarch64 process-reaping arrives with
-the spawn slice.
+`FcProcess` + the `Firecracker` client boot a real microVM end to end: `just
+lifecycle-test` (feature `real-vm`) spawns Firecracker, configures machine /
+boot-source / rootfs, boots, and asserts the guest reaches userspace, then
+pauses/resumes/reaps it. Run it on a KVM host after `just fetch`. Still to come:
+jailer confinement, snapshot→UFFD-restore wired to the page server, and the
+two-host migration. `shutdown` issues `SendCtrlAltDel` (x86 graceful power-off);
+aarch64 process-reaping uses the `FcProcess` kill path.
 
 ## Testing it in isolation
 

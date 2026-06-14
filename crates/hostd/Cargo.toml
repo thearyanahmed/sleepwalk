@@ -12,6 +12,11 @@ repository.workspace = true
 description = "sleepwalk per-host daemon (internal crate)."
 publish = false
 
+[features]
+# Integration tests that drive a real Firecracker process; need /dev/kvm and the
+# fetched artifacts. Off by default so unit/mock tests run anywhere.
+real-vm = []
+
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true

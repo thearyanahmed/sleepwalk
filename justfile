@@ -80,9 +80,9 @@ uffd-test:
 
 # tier 2 · functional KVM (needs /dev/kvm)
 
-# Single-host snapshot/restore lifecycle.
+# Single-host real-Firecracker boot lifecycle (needs /dev/kvm + `just fetch`).
 lifecycle-test:
-    @echo "not implemented yet (single-host lifecycle)" && exit 1
+    cargo test -p hostd --features real-vm --test lifecycle -- --nocapture
 
 # Two-host A->B migration.
 migrate-test:

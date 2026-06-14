@@ -38,10 +38,19 @@ sha256_aarch64 = "e3544b10603acbf3db492cb52e000d22ba202cb4b63b9add027565683e11c5
 sha256_x86_64  = "e20e46d0c36c55c0d1014eb20576171b3f3d922260d9f792017aeff53af3d4f2"
 
 [rootfs]
-# Minimal busybox/alpine ext4 for the synthetic profile (built locally, Unit 0.4).
+# Minimal busybox/alpine ext4 for the synthetic profile (built locally).
 # Pinned by content hash once built; the build recipe is the source, this is the lock.
 sha256_aarch64 = ""
 sha256_x86_64  = ""
+
+[ci_rootfs]
+# Firecracker CI Ubuntu rootfs (squashfs) used by the real-VM boot/lifecycle test
+# — read-only, auto-login on ttyS0. Distinct from the synthetic [rootfs] above.
+version = "ubuntu-24.04"
+url_aarch64 = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/aarch64/ubuntu-24.04.squashfs"
+url_x86_64  = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.15/x86_64/ubuntu-24.04.squashfs"
+sha256_aarch64 = ""
+sha256_x86_64  = "68321e0482baeb3844dafe8a6b08a6902401a7afc41fbfd8c3d9ea08aadd244f"
 
 [dev_vm]
 # Ubuntu cloud image for the M1/M2 TCG dev VM (path A'). Host-side only.

@@ -26,6 +26,7 @@
 
 pub mod drain;
 pub mod firecracker;
+pub mod process;
 pub mod pseudo_firecracker;
 pub mod quiesce;
 pub mod statedir;
@@ -39,6 +40,7 @@ pub use firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
     SnapshotSource, SnapshotTarget,
 };
+pub use process::FcProcess;
 pub use pseudo_firecracker::PseudoFirecracker;
 pub use quiesce::{
     AppLayer, InfraLayer, InfraThresholds, QuiescenceDetector, QuiescenceReport, StorageLayer,
