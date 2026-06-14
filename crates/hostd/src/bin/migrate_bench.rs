@@ -14,7 +14,7 @@
 //! only — no network transfer. Numbers from a small/loaded box are not
 //! publication-valid; this is the instrument, not the result.
 //!
-//! Run: `just migrate-bench` (or `cargo run -p hostd --features real-vm
+//! Run: `just migrate-bench` (or `cargo run -p hostd --features kvm
 //! --bin migrate-bench`). Tunable via `SLEEPWALK_BENCH_CYCLES` (default 20),
 //! `SLEEPWALK_BENCH_SETTLE_MS` (default 1000), `SLEEPWALK_ARTIFACTS`.
 

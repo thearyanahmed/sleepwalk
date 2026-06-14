@@ -1,5 +1,5 @@
 //! Single-host snapshot → UFFD lazy restore of a real VM (needs `/dev/kvm` +
-//! fetched artifacts). Gated behind `--features real-vm`; run with
+//! fetched artifacts). Gated behind `--features kvm`; run with
 //! `just restore-test` on a KVM host after `just fetch`.
 //!
 //! This is the first end-to-end proof of the core idea: boot a VM, snapshot it,
@@ -8,7 +8,7 @@
 //! is alive (it pauses and resumes after restore, which a guest stuck on an
 //! unserved page fault could not do). Every post-restore step is wrapped in a
 //! timeout so a broken handler fails loudly instead of hanging.
-#![cfg(all(target_os = "linux", feature = "real-vm"))]
+#![cfg(all(target_os = "linux", feature = "kvm"))]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

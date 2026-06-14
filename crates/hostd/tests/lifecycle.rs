@@ -1,12 +1,12 @@
 //! Real single-host Firecracker lifecycle (needs `/dev/kvm` + fetched
-//! artifacts). Gated behind `--features real-vm` so it never runs in the
+//! artifacts). Gated behind `--features kvm` so it never runs in the
 //! everywhere unit/mock suite; drive it with `just lifecycle-test` on a Linux
 //! box that has run `just fetch`.
 //!
 //! It spawns a real Firecracker process, configures and boots a microVM through
 //! the control client, and asserts the guest reached userspace by watching its
 //! serial console for the login banner — then pauses, resumes, and reaps it.
-#![cfg(all(target_os = "linux", feature = "real-vm"))]
+#![cfg(all(target_os = "linux", feature = "kvm"))]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

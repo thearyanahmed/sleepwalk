@@ -1,5 +1,5 @@
 //! A→B migration with the memory moved over the network (needs `/dev/kvm` +
-//! fetched artifacts). Gated behind `--features real-vm`; run with
+//! fetched artifacts). Gated behind `--features kvm`; run with
 //! `just migrate-test`.
 //!
 //! Unlike `restore.rs` (which restores from the same on-disk snapshot), this
@@ -8,7 +8,7 @@
 //! UFFD page server — the same path a real two-host move takes. Here both ends
 //! run on one host over loopback; pointing the sender at another droplet's IP is
 //! the only change for a true cross-host migration.
-#![cfg(all(target_os = "linux", feature = "real-vm"))]
+#![cfg(all(target_os = "linux", feature = "kvm"))]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

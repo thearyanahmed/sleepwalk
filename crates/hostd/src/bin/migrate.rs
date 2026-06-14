@@ -13,7 +13,7 @@
 //! Firecracker, kernel, and rootfs artifacts at the same paths the snapshot
 //! references (CPU-homogeneous hosts — see ADR-004).
 //!
-//! Build: requires the `real-vm` feature and Linux + `/dev/kvm` + `just fetch`.
+//! Build: requires the `kvm` feature and Linux + `/dev/kvm` + `just fetch`.
 
 fn main() {
     #[cfg(target_os = "linux")]

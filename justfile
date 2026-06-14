@@ -82,31 +82,31 @@ uffd-test:
 
 # Single-host real-Firecracker boot lifecycle (needs /dev/kvm + `just fetch`).
 lifecycle-test:
-    cargo test -p hostd --features real-vm --test lifecycle -- --nocapture
+    cargo test -p hostd --features kvm --test lifecycle -- --nocapture
 
 # Single-host snapshot -> UFFD lazy restore of a real VM (needs /dev/kvm + fetch).
 restore-test:
-    cargo test -p hostd --features real-vm --test restore -- --nocapture
+    cargo test -p hostd --features kvm --test restore -- --nocapture
 
 # Migration freeze-window benchmark: boot once, ping-pong N migrations, record
 # each timing + min/max/mean as JSON. Tunable via SLEEPWALK_BENCH_CYCLES /
 # SLEEPWALK_BENCH_SETTLE_MS. Needs /dev/kvm + `just fetch`.
 migrate-bench:
-    cargo run -q -p hostd --features real-vm --bin migrate-bench
+    cargo run -q -p hostd --features kvm --bin migrate-bench
 
 # Two-process A->B migration. Start the receiver on the target first, then the
 # sender on the source. Loopback: `migrate-recv 127.0.0.1:9000` + `migrate-send
 # 127.0.0.1:9000`. Cross-host: run recv on B, point send at B's IP. Needs KVM.
 migrate-recv ADDR:
-    cargo run -q -p hostd --features real-vm --bin migrate -- recv {{ADDR}}
+    cargo run -q -p hostd --features kvm --bin migrate -- recv {{ADDR}}
 
 migrate-send ADDR:
-    cargo run -q -p hostd --features real-vm --bin migrate -- send {{ADDR}}
+    cargo run -q -p hostd --features kvm --bin migrate -- send {{ADDR}}
 
 # A->B migration with memory streamed over TCP (needs /dev/kvm + `just fetch`).
 # Loopback here; point the sender at another droplet's IP for a real cross-host run.
 migrate-test:
-    cargo test -p hostd --features real-vm --test migrate -- --nocapture
+    cargo test -p hostd --features kvm --test migrate -- --nocapture
 
 # Turn-vs-drain chaos against real VMs, 100 wall-clock runs.
 chaos-vm:

@@ -35,7 +35,7 @@ between hosts. Internal crate.
 ## Real Firecracker (needs `/dev/kvm`)
 
 `FcProcess` + the `Firecracker` client boot a real microVM end to end: `just
-lifecycle-test` (feature `real-vm`) spawns Firecracker, configures machine /
+lifecycle-test` (feature `kvm`) spawns Firecracker, configures machine /
 boot-source / rootfs, boots, asserts the guest reaches userspace, then
 pauses/resumes/reaps it.
 
