@@ -28,7 +28,7 @@ fi
 
 # ── runtime deps ─────────────────────────────────────────────────────────────
 # Firecracker ships as a static binary, so no build toolchain — just fetch/unpack
-# and a couple of OS tools; tap/NAT networking deps come in Phase 3.
+# and a couple of OS tools; tap/NAT networking deps come with two-host migration.
 #
 # These ship in the Ubuntu cloud image already, so we install ONLY what's missing
 # and skip apt entirely otherwise. That matters on path A' (TCG): apt-get triggers
@@ -66,5 +66,5 @@ $(_log "host ready")
   arch        : $(_arch)
   /dev/kvm    : present
   kvm groups  : $(getent group kvm || echo '(none)')
-  next        : fetch artifacts (just fetch) and boot a microVM (just up, Unit 0.4)
+  next        : fetch artifacts (just fetch) and boot a microVM (just up)
 EOF

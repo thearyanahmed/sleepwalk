@@ -3,7 +3,7 @@
 # host's arch, per images/versions.toml. Self-pins unpinned hashes (prints the
 # computed value to paste back). Idempotent: re-verifies what's already present.
 #
-# Usage: scripts/fetch-artifacts.sh            (Unit 0.2 — `just fetch`)
+# Usage: scripts/fetch-artifacts.sh            (`just fetch`)
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -37,7 +37,7 @@ fetch_one() {
 
 # ── Firecracker binary ───────────────────────────────────────────────────────
 fc_version="$(_toml_get "$VERSIONS" firecracker version)"
-[[ -n "$fc_version" ]] || _die "firecracker.version is empty in versions.toml — verify against GitHub releases and pin it (Unit 0.2)"
+[[ -n "$fc_version" ]] || _die "firecracker.version is empty in versions.toml — verify against GitHub releases and pin it"
 fc_hash="$(_toml_get "$VERSIONS" firecracker "sha256_$ARCH")"
 # Canonical release URL layout: firecracker-<ver>-<arch>.tgz from the GitHub release.
 fc_url="https://github.com/firecracker-microvm/firecracker/releases/download/${fc_version}/firecracker-${fc_version}-${ARCH}.tgz"
@@ -47,7 +47,7 @@ fetch_one "firecracker ${fc_version}" "$fc_url" "$OUT/firecracker-${fc_version}-
 k_version="$(_toml_get "$VERSIONS" kernel version)"
 k_url="$(_toml_get "$VERSIONS" kernel "url_$ARCH")"
 k_hash="$(_toml_get "$VERSIONS" kernel "sha256_$ARCH")"
-[[ -n "$k_version" ]] || _die "kernel.version is empty in versions.toml — pin a specific CI kernel build (Unit 0.2)"
+[[ -n "$k_version" ]] || _die "kernel.version is empty in versions.toml — pin a specific CI kernel build"
 fetch_one "kernel ${k_version}" "$k_url" "$OUT/vmlinux-${k_version}-${ARCH}" "$k_hash"
 
 # ── summary ──────────────────────────────────────────────────────────────────

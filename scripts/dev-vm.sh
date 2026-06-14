@@ -47,7 +47,7 @@ PUBKEY="$(cat "$WORK/dev-vm-key.pub")"
 # ── base cloud image ─────────────────────────────────────────────────────────
 if [[ ! -f "$BASE_IMG" ]]; then
     img_url="$(_toml_get "$SLEEPWALK_ROOT/images/versions.toml" dev_vm ubuntu_img_aarch64)"
-    [[ -n "$img_url" ]] || _die "dev_vm.ubuntu_img_aarch64 not pinned in versions.toml — set the cloud image URL (Unit 0.2)"
+    [[ -n "$img_url" ]] || _die "dev_vm.ubuntu_img_aarch64 not pinned in versions.toml — set the cloud image URL"
     img_hash="$(_toml_get "$SLEEPWALK_ROOT/images/versions.toml" dev_vm sha256_aarch64)"
     _log "downloading Ubuntu cloud image"
     curl -fSL --retry 3 -o "$BASE_IMG.partial" "$img_url" || _die "image download failed"

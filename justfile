@@ -4,7 +4,7 @@
 #   tier 2  functional KVM  — needs /dev/kvm (path A, A', B, or C)
 #   tier 3  real KVM only   — benchmark-valid hosts (path A, B, C — never A'/TCG)
 #
-# Phase 0 status: most targets are stubs that fail loud until their phase lands.
+# Many targets are stubs that fail loud until their capability lands.
 
 # Show the target map (default).
 default:
@@ -30,13 +30,13 @@ fmt:
 chaos:
     cargo test -p harness 'chaos::' -- --nocapture
 
-# ── Phase 0 · environment & artifacts ─────────────────────────────────────
+# ── environment & artifacts ───────────────────────────────────────────────
 
-# Download + checksum pinned Firecracker binary and kernel (Unit 0.2).
+# Download + checksum pinned Firecracker binary and kernel.
 fetch:
     scripts/fetch-artifacts.sh
 
-# Boot the M1/M2 TCG dev VM with a functional /dev/kvm (Unit 0.3, path A').
+# Boot the M1/M2 TCG dev VM with a functional /dev/kvm (path A').
 dev-vm:
     scripts/dev-vm.sh
 
@@ -51,9 +51,9 @@ dev-vm-setup:
         ./ sleepwalk@localhost:sleepwalk/
     scripts/dev-vm.sh ssh 'cd sleepwalk && scripts/setup.sh'
 
-# Boot one Firecracker microVM by hand (Unit 0.4). Phase 0 exit criterion.
+# Boot one Firecracker microVM by hand — the environment exit criterion.
 up:
-    @echo "not implemented until Phase 0 / Unit 0.4 (first-microvm)" && exit 1
+    @echo "not implemented yet (first-microvm: boot a VM by hand)" && exit 1
 
 # ── remote · drive a Linux box over SSH (config in gitignored .env) ───────
 
@@ -75,13 +75,13 @@ remote-run TARGET:
 
 # ── tier 2 · functional KVM (needs /dev/kvm) ──────────────────────────────
 
-# Single-host snapshot/restore lifecycle (Phase 1).
+# Single-host snapshot/restore lifecycle.
 lifecycle-test:
-    @echo "not implemented until Phase 1" && exit 1
+    @echo "not implemented yet (single-host lifecycle)" && exit 1
 
-# Two-host A->B migration (Phase 3).
+# Two-host A->B migration.
 migrate-test:
-    @echo "not implemented until Phase 3" && exit 1
+    @echo "not implemented yet (two-host migration)" && exit 1
 
 # Turn-vs-drain chaos against real VMs, 100 wall-clock runs.
 chaos-vm:
@@ -89,18 +89,18 @@ chaos-vm:
 
 # ── tier 3 · real KVM only (benchmark-valid — refuses TCG) ─────────────────
 
-# O2 freeze-window table vs RAM size (Phase 2).
+# O2 freeze-window table vs RAM size.
 bench-restore:
-    @echo "not implemented until Phase 2" && exit 1
+    @echo "not implemented yet (UFFD restore benchmark)" && exit 1
 
-# Full fleet scenario, O5 (Phase 5).
+# Full fleet scenario, O5.
 e2e:
-    @echo "not implemented until Phase 5" && exit 1
+    @echo "not implemented yet (fleet scenario)" && exit 1
 
-# Agent demo: a coding agent survives migration mid-session, O6 (Phase 5b).
+# Agent demo: a coding agent survives migration mid-session, O6.
 demo-agent:
-    @echo "not implemented until Phase 5b" && exit 1
+    @echo "not implemented yet (agent demo)" && exit 1
 
-# Prometheus + Grafana stack (Phase 5).
+# Prometheus + Grafana stack.
 observe:
-    @echo "not implemented until Phase 5" && exit 1
+    @echo "not implemented yet (observability stack)" && exit 1
