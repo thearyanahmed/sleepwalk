@@ -16,6 +16,7 @@ use crc32fast::Hasher;
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 /// Chunk size for streaming file data (bounds peak memory).
 const CHUNK: usize = 64 * 1024;
@@ -145,6 +146,33 @@ where
     Ok(written)
 }
 
+/// Connect to a receiver at `addr` and stream the snapshot `files` over TCP.
+///
+/// The host-to-host path: the source calls this after `create_snapshot` to move
+/// the memory + vmstate to the target, which is running [`recv_snapshot`].
+///
+/// # Errors
+/// If the connection, the framed send, or the shutdown fails.
+pub async fn send_snapshot(addr: &str, files: &[OutboundFile]) -> Result<(), TransferError> {
+    let mut stream = TcpStream::connect(addr).await.map_err(io)?;
+    send_files(&mut stream, files).await?;
+    stream.shutdown().await.map_err(io)?;
+    Ok(())
+}
+
+/// Accept one connection on `listener` and receive a snapshot into `dest_dir`,
+/// verifying each file's CRC. Returns the written paths.
+///
+/// # Errors
+/// If accepting, receiving, or a checksum check fails.
+pub async fn recv_snapshot(
+    listener: &TcpListener,
+    dest_dir: &Path,
+) -> Result<Vec<PathBuf>, TransferError> {
+    let (mut stream, _) = listener.accept().await.map_err(io)?;
+    recv_files(&mut stream, dest_dir).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +274,47 @@ mod tests {
         let dest = temp_dir();
         let written = recv_files(&mut buf.as_slice(), &dest).await.expect("recv");
         assert!(written.is_empty());
+    }
+
+    #[tokio::test]
+    async fn snapshot_round_trips_over_tcp() {
+        let src = temp_dir();
+        let mem = src.join("mem.snap");
+        let state = src.join("state.snap");
+        write(&mem, &vec![0x5Au8; 200_000]);
+        write(&state, b"vmstate-blob");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        let dest = temp_dir();
+        let dest_for_task = dest.clone();
+        let recv = tokio::spawn(async move { recv_snapshot(&listener, &dest_for_task).await });
+
+        send_snapshot(
+            &addr,
+            &[
+                OutboundFile {
+                    name: "mem.snap".to_owned(),
+                    path: mem,
+                },
+                OutboundFile {
+                    name: "state.snap".to_owned(),
+                    path: state,
+                },
+            ],
+        )
+        .await
+        .expect("send over tcp");
+
+        let written = recv.await.expect("join").expect("recv over tcp");
+        assert_eq!(written.len(), 2);
+        assert_eq!(
+            std::fs::read(dest.join("mem.snap")).unwrap(),
+            vec![0x5Au8; 200_000]
+        );
+        assert_eq!(
+            std::fs::read(dest.join("state.snap")).unwrap(),
+            b"vmstate-blob"
+        );
     }
 }

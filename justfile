@@ -94,9 +94,10 @@ restore-test:
 migrate-bench:
     cargo run -q -p hostd --features real-vm --bin migrate-bench
 
-# Two-host A->B migration.
+# A->B migration with memory streamed over TCP (needs /dev/kvm + `just fetch`).
+# Loopback here; point the sender at another droplet's IP for a real cross-host run.
 migrate-test:
-    @echo "not implemented yet (two-host migration)" && exit 1
+    cargo test -p hostd --features real-vm --test migrate -- --nocapture
 
 # Turn-vs-drain chaos against real VMs, 100 wall-clock runs.
 chaos-vm:

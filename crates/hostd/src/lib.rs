@@ -46,7 +46,9 @@ pub use quiesce::{
     AppLayer, InfraLayer, InfraThresholds, QuiescenceDetector, QuiescenceReport, StorageLayer,
 };
 pub use statedir::VmDir;
-pub use transfer::{OutboundFile, TransferError, recv_files, send_files};
+pub use transfer::{
+    OutboundFile, TransferError, recv_files, recv_snapshot, send_files, send_snapshot,
+};
 #[cfg(target_os = "linux")]
 pub use uffd::{
     FilePageSource, GuestRegionUffdMapping, PageFaultServer, PageSource, UffdError,
