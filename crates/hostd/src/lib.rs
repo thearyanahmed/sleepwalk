@@ -36,7 +36,8 @@ pub mod vm;
 
 pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
-    Firecracker, FirecrackerApi, FirecrackerError, MemBackend, SnapshotSource, SnapshotTarget,
+    BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
+    SnapshotSource, SnapshotTarget,
 };
 pub use pseudo_firecracker::PseudoFirecracker;
 pub use quiesce::{

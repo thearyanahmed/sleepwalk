@@ -9,7 +9,10 @@
 
 use std::sync::Mutex;
 
-use crate::firecracker::{FirecrackerApi, FirecrackerError, SnapshotSource, SnapshotTarget};
+use crate::firecracker::{
+    BootSource, Drive, FirecrackerApi, FirecrackerError, MachineConfig, SnapshotSource,
+    SnapshotTarget,
+};
 
 /// A fake Firecracker that records calls and can inject failures.
 #[derive(Debug, Default)]
@@ -82,6 +85,15 @@ impl PseudoFirecracker {
 }
 
 impl FirecrackerApi for PseudoFirecracker {
+    async fn configure_machine(&self, _cfg: MachineConfig) -> Result<(), FirecrackerError> {
+        self.record("configure_machine")
+    }
+    async fn configure_boot_source(&self, _src: BootSource) -> Result<(), FirecrackerError> {
+        self.record("configure_boot_source")
+    }
+    async fn configure_drive(&self, _drive: Drive) -> Result<(), FirecrackerError> {
+        self.record("configure_drive")
+    }
     async fn boot(&self) -> Result<(), FirecrackerError> {
         self.record("boot")
     }

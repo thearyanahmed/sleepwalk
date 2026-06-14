@@ -13,6 +13,9 @@
 //!
 //! | op              | method | path               | body                                |
 //! |-----------------|--------|--------------------|-------------------------------------|
+//! | configure_machine     | PUT | `/machine-config` | `{vcpu_count, mem_size_mib}`      |
+//! | configure_boot_source | PUT | `/boot-source`    | `{kernel_image_path, boot_args}`  |
+//! | configure_drive       | PUT | `/drives/{id}`    | `{drive_id, path_on_host, is_root_device, is_read_only}` |
 //! | boot            | PUT    | `/actions`         | `{"action_type":"InstanceStart"}`   |
 //! | pause           | PATCH  | `/vm`              | `{"state":"Paused"}`                |
 //! | resume          | PATCH  | `/vm`              | `{"state":"Resumed"}`               |
@@ -53,6 +56,38 @@ pub enum FirecrackerError {
         /// What went wrong reaching it.
         detail: String,
     },
+}
+
+/// The kernel and command line for a boot (`PUT /boot-source`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BootSource {
+    /// The uncompressed kernel image (`kernel_image_path`).
+    pub kernel_image: PathBuf,
+    /// The kernel command line (`boot_args`), e.g.
+    /// `console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro`.
+    pub boot_args: String,
+}
+
+/// One block device to attach (`PUT /drives/{drive_id}`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Drive {
+    /// The drive id, also the last path segment (`drive_id`).
+    pub drive_id: String,
+    /// The backing file on the host (`path_on_host`).
+    pub path_on_host: PathBuf,
+    /// Whether this is the root device (`is_root_device`).
+    pub is_root_device: bool,
+    /// Whether the guest sees it read-only (`is_read_only`).
+    pub is_read_only: bool,
+}
+
+/// vCPU and memory sizing (`PUT /machine-config`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MachineConfig {
+    /// Number of vCPUs (`vcpu_count`).
+    pub vcpu_count: u32,
+    /// Guest RAM in MiB (`mem_size_mib`).
+    pub mem_size_mib: u32,
 }
 
 /// Where a snapshot's two files are written (`PUT /snapshot/create`). The VM
@@ -100,6 +135,21 @@ pub struct SnapshotSource {
 /// Process spawn and teardown are hostd's job around this client (a later
 /// slice); the implementations here are purely the API surface.
 pub trait FirecrackerApi {
+    /// Set vCPU count and memory before boot (`PUT /machine-config`).
+    fn configure_machine(
+        &self,
+        cfg: MachineConfig,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Set the kernel and boot args before boot (`PUT /boot-source`).
+    fn configure_boot_source(
+        &self,
+        src: BootSource,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Attach a block device before boot (`PUT /drives/{id}`).
+    fn configure_drive(
+        &self,
+        drive: Drive,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
     /// Start the configured guest (boot the kernel).
     fn boot(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
     /// Pause the VM (vCPUs stopped); prerequisite for snapshotting.
@@ -151,7 +201,7 @@ impl Firecracker {
     async fn send(
         &self,
         method: Method,
-        path: &'static str,
+        path: &str,
         body: Bytes,
         op: &'static str,
     ) -> Result<(), FirecrackerError> {
@@ -232,6 +282,44 @@ fn path_str(p: &std::path::Path) -> String {
 }
 
 impl FirecrackerApi for Firecracker {
+    async fn configure_machine(&self, cfg: MachineConfig) -> Result<(), FirecrackerError> {
+        let body = json_body(
+            &serde_json::json!({
+                "vcpu_count": cfg.vcpu_count,
+                "mem_size_mib": cfg.mem_size_mib,
+            }),
+            "configure_machine",
+        )?;
+        self.send(Method::PUT, "/machine-config", body, "configure_machine")
+            .await
+    }
+
+    async fn configure_boot_source(&self, src: BootSource) -> Result<(), FirecrackerError> {
+        let body = json_body(
+            &serde_json::json!({
+                "kernel_image_path": path_str(&src.kernel_image),
+                "boot_args": src.boot_args,
+            }),
+            "configure_boot_source",
+        )?;
+        self.send(Method::PUT, "/boot-source", body, "configure_boot_source")
+            .await
+    }
+
+    async fn configure_drive(&self, drive: Drive) -> Result<(), FirecrackerError> {
+        let path = format!("/drives/{}", drive.drive_id);
+        let body = json_body(
+            &serde_json::json!({
+                "drive_id": drive.drive_id,
+                "path_on_host": path_str(&drive.path_on_host),
+                "is_root_device": drive.is_root_device,
+                "is_read_only": drive.is_read_only,
+            }),
+            "configure_drive",
+        )?;
+        self.send(Method::PUT, &path, body, "configure_drive").await
+    }
+
     async fn boot(&self) -> Result<(), FirecrackerError> {
         self.send(
             Method::PUT,
@@ -391,6 +479,59 @@ mod tests {
     }
 
     const OK_204: &str = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n";
+
+    #[tokio::test]
+    async fn configure_machine_sends_machine_config() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.configure_machine(MachineConfig {
+            vcpu_count: 2,
+            mem_size_mib: 512,
+        })
+        .await
+        .expect("configure ok");
+        let c = cap.lock().await;
+        assert_eq!(c.method, "PUT");
+        assert_eq!(c.path, "/machine-config");
+        assert_eq!(c.body, r#"{"mem_size_mib":512,"vcpu_count":2}"#);
+    }
+
+    #[tokio::test]
+    async fn configure_boot_source_sends_kernel_and_args() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.configure_boot_source(BootSource {
+            kernel_image: PathBuf::from("/k/vmlinux"),
+            boot_args: "console=ttyS0 root=/dev/vda ro".to_owned(),
+        })
+        .await
+        .expect("configure ok");
+        let c = cap.lock().await;
+        assert_eq!(c.method, "PUT");
+        assert_eq!(c.path, "/boot-source");
+        assert_eq!(
+            c.body,
+            r#"{"boot_args":"console=ttyS0 root=/dev/vda ro","kernel_image_path":"/k/vmlinux"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn configure_drive_targets_the_drive_id_path() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.configure_drive(Drive {
+            drive_id: "rootfs".to_owned(),
+            path_on_host: PathBuf::from("/img/root.ext4"),
+            is_root_device: true,
+            is_read_only: true,
+        })
+        .await
+        .expect("configure ok");
+        let c = cap.lock().await;
+        assert_eq!(c.method, "PUT");
+        assert_eq!(c.path, "/drives/rootfs");
+        assert_eq!(
+            c.body,
+            r#"{"drive_id":"rootfs","is_read_only":true,"is_root_device":true,"path_on_host":"/img/root.ext4"}"#
+        );
+    }
 
     #[tokio::test]
     async fn boot_sends_instance_start_and_succeeds_on_204() {
