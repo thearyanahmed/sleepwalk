@@ -10,6 +10,9 @@
 //!   [`pseudo_channel::PseudoChannel`] stand-in for tests.
 //! - [`guest::Guest`] — the supervisor state machine (handshake, turn signals,
 //!   drain gate).
+//! - [`clock::ClockFixup`] — the post-restore clock correction: maps the guest's
+//!   frozen clock back onto true wall-clock time so timestamps stay comparable
+//!   across a migration.
 //!
 //! The real transport, `VsockChannel` (`AF_VSOCK`), and process-wrapping require
 //! a running guest and land in a later slice; everything here is tested against
@@ -18,11 +21,13 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod channel;
+pub mod clock;
 pub mod framing;
 pub mod guest;
 pub mod pseudo_channel;
 
 pub use channel::{ChannelError, GuestChannel};
+pub use clock::ClockFixup;
 pub use framing::JsonLineChannel;
 pub use guest::{Guest, GuestError, StartOutcome};
 pub use pseudo_channel::PseudoChannel;
