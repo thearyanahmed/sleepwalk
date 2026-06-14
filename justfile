@@ -98,11 +98,11 @@ migrate-bench:
 # Two-process A->B migration. Start the receiver on the target first, then the
 # sender on the source. Loopback: `migrate-recv 127.0.0.1:9000` + `migrate-send
 # 127.0.0.1:9000`. Cross-host: run recv on B, point send at B's IP. Needs KVM.
-migrate-recv ADDR:
-    cargo run -q -p hostd --features kvm --bin migrate -- recv {{ADDR}}
+migrate-recv ADDR COUNT="1":
+    cargo run -q -p hostd --features kvm --bin migrate -- recv {{ADDR}} {{COUNT}}
 
-migrate-send ADDR:
-    cargo run -q -p hostd --features kvm --bin migrate -- send {{ADDR}}
+migrate-send ADDR COUNT="1":
+    cargo run -q -p hostd --features kvm --bin migrate -- send {{ADDR}} {{COUNT}}
 
 # A->B migration with memory streamed over TCP (needs /dev/kvm + `just fetch`).
 # Loopback here; point the sender at another droplet's IP for a cross-host run.

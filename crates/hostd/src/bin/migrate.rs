@@ -1,17 +1,24 @@
-//! Two-process A→B migration.
+//! Two-process A→B migration (single run, or a counted benchmark).
 //!
 //! Two cooperating commands, one per host:
 //!
-//!   migrate recv <listen_addr>     # on the target (B): listen, receive the
-//!                                  # snapshot, UFFD-restore, keep the VM alive
-//!   migrate send <target_addr>     # on the source (A): boot a VM, snapshot it,
-//!                                  # stream mem+vmstate to B, report timings
+//!   migrate recv <listen_addr> [count]   # target (B): accept `count` migrations,
+//!                                         # UFFD-restore each and bring it up
+//!   migrate send <target_addr> [count]   # source (A): for each of `count` runs
+//!                                         # boot a VM, snapshot it, stream it to B,
+//!                                         # and time snapshot + transfer
 //!
-//! `recv` must be running before `send` connects. Over loopback both run on one
-//! host (`recv 127.0.0.1:9000` then `send 127.0.0.1:9000`); for a two-host
-//! move, run `recv` on droplet B and point `send` at B's IP. B must have the same
-//! Firecracker, kernel, and rootfs artifacts at the same paths the snapshot
-//! references (CPU-homogeneous hosts — see ADR-004).
+//! `recv` must be running before `send` connects, and both must use the same
+//! `count`. Over loopback both run on one host; for a two-host move run `recv` on
+//! droplet B and point `send` at B's IP. B must have the same Firecracker,
+//! kernel, and rootfs at the same paths the snapshot references (CPU-homogeneous
+//! hosts — ADR-004).
+//!
+//! This times the **source side** of the freeze window — pause → snapshot →
+//! transfer-complete — over one clock. The target's UFFD restore/resume (lazy,
+//! roughly constant) is not included, so the figure is a lower bound on total
+//! perceived downtime. Each run boots a fresh VM (A→B repeated, not a single VM
+//! bounced back and forth).
 //!
 //! Build: requires the `kvm` feature and Linux + `/dev/kvm` + `just fetch`.
 
@@ -44,89 +51,30 @@ mod linux {
 
     pub fn main() {
         let args: Vec<String> = std::env::args().collect();
+        let addr = args.get(2).cloned();
+        let count: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("tokio runtime");
-        match (args.get(1).map(String::as_str), args.get(2)) {
-            (Some("recv"), Some(addr)) => rt.block_on(recv(addr)),
-            (Some("send"), Some(addr)) => rt.block_on(send(addr)),
+        match (args.get(1).map(String::as_str), addr) {
+            (Some("recv"), Some(addr)) => rt.block_on(recv(&addr, count)),
+            (Some("send"), Some(addr)) => rt.block_on(send(&addr, count)),
             _ => {
-                eprintln!("usage: migrate <recv|send> <addr>");
+                eprintln!("usage: migrate <recv|send> <addr> [count]");
                 std::process::exit(2);
             }
         }
     }
 
-    /// Target side: receive a snapshot and bring the VM up via the UFFD server.
-    async fn recv(listen_addr: &str) {
-        let fc_bin = require(&artifacts_dir(), "firecracker binary", |n| {
-            n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
-        });
-        let work = std::env::temp_dir().join(format!("sleepwalk-recv-{}", std::process::id()));
-        std::fs::create_dir_all(&work).expect("work dir");
-
-        let listener = TcpListener::bind(listen_addr).await.expect("bind listener");
-        println!(
-            "[recv] listening on {listen_addr}, work dir {}",
-            work.display()
-        );
-
-        let files = recv_snapshot(&listener, &work)
-            .await
-            .expect("recv snapshot");
-        println!("[recv] received {} files", files.len());
-
-        let mem = work.join("mem.snap");
-        let state = work.join("state.snap");
-        assert!(mem.exists() && state.exists(), "snapshot files present");
-
-        let uffd_sock = work.join("uffd.sock");
-        let handler = UffdRestoreHandler::bind(&uffd_sock).expect("bind uffd handler");
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = Arc::clone(&stop);
-        let mem_thread = mem.clone();
-        let serve = std::thread::spawn(move || {
-            let _ = handler.serve(&mem_thread, &stop_thread);
-        });
-
-        let mut proc = FcProcess::spawn(
-            &fc_bin,
-            &work.join("fc.sock"),
-            &work.join("fc.log"),
-            secs(10),
-        )
-        .expect("spawn fc");
-        let fc = Firecracker::new(work.join("fc.sock"));
-        fc.load_snapshot(SnapshotSource {
-            state_file: state,
-            backend: MemBackend::Uffd { socket: uffd_sock },
-            resume: true,
-        })
-        .await
-        .expect("restore + resume");
-        println!("[recv] restored and resumed — VM is alive on this host");
-
-        // Hold the VM up so the migration is observable, then tear down. A real
-        // deployment would keep it indefinitely; this is the build/test harness.
-        let hold = Duration::from_millis(env_or("SLEEPWALK_MIGRATE_HOLD_MS", 5000));
-        tokio::time::sleep(hold).await;
-
-        fc.pause().await.expect("pause");
-        fc.resume().await.expect("resume");
-        println!(
-            "[recv] VM still responsive after {} ms; shutting down",
-            hold.as_millis()
-        );
-
-        stop.store(true, Ordering::Release);
-        let _ = proc.kill();
-        let _ = serve.join();
-        let _ = std::fs::remove_dir_all(&work);
+    /// One migration's source-side timing, in milliseconds.
+    struct Timing {
+        snapshot_ms: f64,
+        transfer_ms: f64,
     }
 
-    /// Source side: boot a VM, snapshot it, and stream it to the target.
-    async fn send(target_addr: &str) {
+    /// Source side: run `count` migrations to `addr`, timing each.
+    async fn send(addr: &str, count: usize) {
         let art = artifacts_dir();
         let fc_bin = require(&art, "firecracker binary", |n| {
             n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
@@ -135,11 +83,37 @@ mod linux {
         let rootfs = require(&art, "rootfs", |n| {
             n.ends_with(".squashfs") || n.ends_with(".ext4")
         });
-        let work = std::env::temp_dir().join(format!("sleepwalk-send-{}", std::process::id()));
+
+        let mut timings = Vec::with_capacity(count);
+        let mut bytes = 0u64;
+        for i in 0..count {
+            let (t, b) = migrate_once(&fc_bin, &kernel, &rootfs, addr, i).await;
+            bytes = b;
+            println!(
+                "run {:>2}: snapshot {:.1} ms, transfer {:.1} ms, total {:.1} ms",
+                i + 1,
+                t.snapshot_ms,
+                t.transfer_ms,
+                t.snapshot_ms + t.transfer_ms
+            );
+            timings.push(t);
+        }
+        report(&timings, bytes);
+    }
+
+    /// Boot a VM, snapshot it, and stream it to `addr`; return the timing + bytes.
+    async fn migrate_once(
+        fc_bin: &Path,
+        kernel: &Path,
+        rootfs: &Path,
+        addr: &str,
+        i: usize,
+    ) -> (Timing, u64) {
+        let work = std::env::temp_dir().join(format!("sleepwalk-send-{}-{i}", std::process::id()));
         std::fs::create_dir_all(&work).expect("work dir");
 
         let mut proc = FcProcess::spawn(
-            &fc_bin,
+            fc_bin,
             &work.join("fc.sock"),
             &work.join("fc.log"),
             secs(10),
@@ -153,14 +127,14 @@ mod linux {
         .await
         .expect("machine");
         fc.configure_boot_source(BootSource {
-            kernel_image: kernel,
+            kernel_image: kernel.to_path_buf(),
             boot_args: BOOT_ARGS.to_owned(),
         })
         .await
         .expect("boot source");
         fc.configure_drive(Drive {
             drive_id: "rootfs".to_owned(),
-            path_on_host: rootfs,
+            path_on_host: rootfs.to_path_buf(),
             is_root_device: true,
             is_read_only: true,
         })
@@ -171,12 +145,11 @@ mod linux {
             wait_for_serial(&work.join("fc.log"), "login", secs(20)).await,
             "source VM never reached userspace"
         );
-        println!("[send] VM booted; migrating to {target_addr}");
 
         let mem = work.join("mem.snap");
         let state = work.join("state.snap");
 
-        let freeze_start = Instant::now();
+        let t0 = Instant::now();
         fc.pause().await.expect("pause");
         fc.create_snapshot(SnapshotTarget {
             mem_file: mem.clone(),
@@ -184,10 +157,9 @@ mod linux {
         })
         .await
         .expect("snapshot");
-        let snapshot_done = Instant::now();
-
+        let t1 = Instant::now();
         send_snapshot(
-            target_addr,
+            addr,
             &[
                 OutboundFile {
                     name: "mem.snap".to_owned(),
@@ -201,25 +173,116 @@ mod linux {
         )
         .await
         .expect("send snapshot");
-        let sent = Instant::now();
+        let t2 = Instant::now();
 
         let bytes = std::fs::metadata(&mem).map(|m| m.len()).unwrap_or(0);
-        println!(
-            "[send] snapshot {:.1} ms, transfer {:.1} ms ({} bytes) — source VM released",
-            (snapshot_done - freeze_start).as_secs_f64() * 1000.0,
-            (sent - snapshot_done).as_secs_f64() * 1000.0,
-            bytes,
-        );
-
         let _ = proc.kill();
         let _ = std::fs::remove_dir_all(&work);
+        (
+            Timing {
+                snapshot_ms: (t1 - t0).as_secs_f64() * 1000.0,
+                transfer_ms: (t2 - t1).as_secs_f64() * 1000.0,
+            },
+            bytes,
+        )
     }
 
-    fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-        std::env::var(key)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
+    fn report(timings: &[Timing], bytes: u64) {
+        if timings.is_empty() {
+            println!("no runs");
+            return;
+        }
+        let totals: Vec<f64> = timings
+            .iter()
+            .map(|t| t.snapshot_ms + t.transfer_ms)
+            .collect();
+        let snaps: Vec<f64> = timings.iter().map(|t| t.snapshot_ms).collect();
+        let xfers: Vec<f64> = timings.iter().map(|t| t.transfer_ms).collect();
+        let stat = |v: &[f64]| {
+            let n = v.len() as f64;
+            let min = v.iter().copied().fold(f64::INFINITY, f64::min);
+            let max = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            (min, max, v.iter().sum::<f64>() / n)
+        };
+        let (tmin, tmax, tmean) = stat(&totals);
+        let (smin, smax, smean) = stat(&snaps);
+        let (xmin, xmax, xmean) = stat(&xfers);
+
+        println!(
+            "\n=== A->B migration source cost ({} runs, snapshot + transfer) ===",
+            timings.len()
+        );
+        println!("  snapshot  min {smin:.1}  max {smax:.1}  mean {smean:.1} ms");
+        println!("  transfer  min {xmin:.1}  max {xmax:.1}  mean {xmean:.1} ms");
+        println!("  total     min {tmin:.1}  max {tmax:.1}  mean {tmean:.1} ms");
+        println!("  bytes moved / run: {bytes}");
+
+        let json = serde_json::json!({
+            "kind": "cross_host_source_cost",
+            "runs": timings.len(),
+            "guest_mib": GUEST_MIB,
+            "bytes_moved": bytes,
+            "snapshot_ms": snaps,
+            "transfer_ms": xfers,
+            "total_ms": totals,
+            "total_min_ms": tmin, "total_max_ms": tmax, "total_mean_ms": tmean,
+            "note": "source side only (pause->snapshot->transfer-complete); excludes target UFFD restore/resume; 1 vCPU, not publication-valid",
+        });
+        println!("{}", serde_json::to_string(&json).unwrap_or_default());
+    }
+
+    /// Target side: accept and restore `count` migrations in turn.
+    async fn recv(listen_addr: &str, count: usize) {
+        let fc_bin = require(&artifacts_dir(), "firecracker binary", |n| {
+            n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
+        });
+        let listener = TcpListener::bind(listen_addr).await.expect("bind listener");
+        println!("[recv] listening on {listen_addr} for {count} migration(s)");
+
+        for i in 0..count {
+            let work =
+                std::env::temp_dir().join(format!("sleepwalk-recv-{}-{i}", std::process::id()));
+            std::fs::create_dir_all(&work).expect("work dir");
+
+            let files = recv_snapshot(&listener, &work)
+                .await
+                .expect("recv snapshot");
+            assert_eq!(files.len(), 2, "snapshot is two files");
+
+            let uffd_sock = work.join("uffd.sock");
+            let handler = UffdRestoreHandler::bind(&uffd_sock).expect("bind uffd handler");
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_thread = Arc::clone(&stop);
+            let mem_thread = work.join("mem.snap");
+            let serve = std::thread::spawn(move || {
+                let _ = handler.serve(&mem_thread, &stop_thread);
+            });
+
+            let mut proc = FcProcess::spawn(
+                &fc_bin,
+                &work.join("fc.sock"),
+                &work.join("fc.log"),
+                secs(10),
+            )
+            .expect("spawn fc");
+            let fc = Firecracker::new(work.join("fc.sock"));
+            fc.load_snapshot(SnapshotSource {
+                state_file: work.join("state.snap"),
+                backend: MemBackend::Uffd { socket: uffd_sock },
+                resume: true,
+            })
+            .await
+            .expect("restore + resume");
+            // Let the resumed guest fault a little, then retire it for the next run.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            println!("[recv] run {} restored and resumed", i + 1);
+
+            stop.store(true, Ordering::Release);
+            let _ = proc.kill();
+            let _ = serve.join();
+            let _ = std::fs::remove_dir_all(&work);
+        }
+        println!("[recv] done ({count} migrations)");
     }
 
     fn secs(n: u64) -> Duration {
