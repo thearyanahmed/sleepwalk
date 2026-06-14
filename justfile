@@ -73,6 +73,11 @@ remote-setup *ARGS:
 remote-run TARGET:
     scripts/remote.sh run {{TARGET}}
 
+# UFFD lazy-restore page server. Needs Linux (userfaultfd) but NOT KVM, so it
+# runs on any Linux box: `just remote-run uffd-test`.
+uffd-test:
+    cargo test -p hostd 'uffd::' -- --nocapture
+
 # tier 2 · functional KVM (needs /dev/kvm)
 
 # Single-host snapshot/restore lifecycle.

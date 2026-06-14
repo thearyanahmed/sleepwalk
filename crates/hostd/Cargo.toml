@@ -23,6 +23,13 @@ bytes.workspace = true
 serde_json.workspace = true
 crc32fast.workspace = true
 
+# UFFD lazy restore is a Linux-kernel feature (userfaultfd(2)); these only build
+# on Linux. On macOS the uffd module is cfg'd out, so the rest of the crate still
+# compiles and tests there.
+[target.'cfg(target_os = "linux")'.dependencies]
+userfaultfd = "0.8"
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "io-util", "rt-multi-thread"] }
 uuid.workspace = true

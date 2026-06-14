@@ -14,6 +14,8 @@
 //! - [`drain::DrainCoordinator`] — folds the guest's wire signals plus locally
 //!   sampled infra/storage state into a [`drain::DrainVerdict`] (the host half
 //!   of the drain protocol; verified, not assumed).
+//! - `uffd::PageFaultServer` (Linux only) — serves guest-memory page faults from
+//!   the snapshot file on demand, the core of lazy restore.
 //!
 //! Jailer spawn + process teardown and the end-to-end test against a real
 //! Firecracker require `/dev/kvm` and land in a later slice; the logic here is
@@ -28,6 +30,8 @@ pub mod pseudo_firecracker;
 pub mod quiesce;
 pub mod statedir;
 pub mod transfer;
+#[cfg(target_os = "linux")]
+pub mod uffd;
 pub mod vm;
 
 pub use drain::{DrainCoordinator, DrainVerdict};
@@ -40,4 +44,6 @@ pub use quiesce::{
 };
 pub use statedir::VmDir;
 pub use transfer::{OutboundFile, TransferError, recv_files, send_files};
+#[cfg(target_os = "linux")]
+pub use uffd::{FilePageSource, PageFaultServer, PageSource, UffdError, create_uffd};
 pub use vm::{LifecycleError, RunState, Vm};
