@@ -24,6 +24,12 @@ lint:
 fmt:
     cargo fmt
 
+# Turn-vs-drain race-rule chaos over seeded interleavings. Deterministic, no VM —
+# the fast falsification layer for the race rule; the wall-clock real-VM run is
+# `chaos-vm` (tier 2). A failure prints the seed that reproduces it.
+chaos:
+    cargo test -p harness 'chaos::' -- --nocapture
+
 # ── Phase 0 · environment & artifacts ─────────────────────────────────────
 
 # Download + checksum pinned Firecracker binary and kernel (Unit 0.2).
@@ -59,9 +65,9 @@ lifecycle-test:
 migrate-test:
     @echo "not implemented until Phase 3" && exit 1
 
-# Turn-vs-drain chaos, 100 iterations (Phase 4).
-chaos:
-    @echo "not implemented until Phase 4" && exit 1
+# Turn-vs-drain chaos against real VMs, 100 wall-clock runs (Phase 4).
+chaos-vm:
+    @echo "not implemented until Phase 4 (real-VM tier)" && exit 1
 
 # ── tier 3 · real KVM only (benchmark-valid — refuses TCG) ─────────────────
 

@@ -11,11 +11,16 @@
 //! Together they avoid coordinated omission, the failure mode that would hide
 //! exactly the latency spike a migration could cause. The request transport
 //! (driving turns through hostd) lands in a later slice.
+//!
+//! - [`chaos`] — the turn-vs-drain chaos harness that falsifies the race rule
+//!   over thousands of deterministic, seeded interleavings (objective O4).
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod chaos;
 pub mod recorder;
 pub mod schedule;
 
+pub use chaos::{RaceReport, simulate};
 pub use recorder::{LatencyRecorder, LatencyStats, RecordError};
 pub use schedule::{Arrivals, Schedule};

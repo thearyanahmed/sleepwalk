@@ -265,8 +265,11 @@ dependencies = [
 name = "harness"
 version = "0.1.0"
 dependencies = [
+ "guestd",
  "hdrhistogram",
+ "proto",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

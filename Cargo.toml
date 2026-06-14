@@ -30,3 +30,5 @@ anyhow = "1"
 
 # proto, the public contract, is depended on by every other crate.
 proto = { path = "crates/proto" }
+# guestd, reused by the harness to drive the drain-gate chaos test.
+guestd = { path = "crates/guestd" }

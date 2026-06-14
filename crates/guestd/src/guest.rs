@@ -125,6 +125,13 @@ impl<C: GuestChannel> Guest<C> {
         &self.secrets
     }
 
+    /// Borrow the underlying channel — used by tests and the chaos harness to
+    /// inspect what the supervisor emitted on the wire.
+    #[must_use]
+    pub fn channel(&self) -> &C {
+        &self.chan
+    }
+
     /// Boot handshake: send `Hello`, then take the `Secrets` reply.
     ///
     /// The secrets are kept in memory only (never written to the rootfs or the
