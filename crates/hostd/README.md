@@ -12,6 +12,7 @@ between hosts. Internal crate.
 | `pseudo_firecracker` | `PseudoFirecracker` — a recording, fault-injecting stand-in implementing the same trait, so the lifecycle logic tests without a VM. |
 | `vm`                 | `Vm` — the lifecycle orchestrator. Tracks `RunState` and rejects illegal operations (pause before boot, resume while running) as typed errors before any Firecracker call. |
 | `quiesce`            | `QuiescenceDetector` — the layered O3 predicate: app (gated + idle) + infra (vCPU quiet N samples + queues) + storage (sync caught up). Quiescent only when all three agree; defaults to *not* quiescent. Layer inputs are fed from the edges; the logic is pure. |
+| `drain`              | `DrainCoordinator` — the host half of the drain protocol. Folds the guest's `DrainAck`/turn signals off the wire plus locally-sampled infra/storage state into a `DrainVerdict` (`Quiescent` or `Busy { in_flight }`). A pure folder, so the decision tests without a clock or socket; the async recv/sample/deadline loop belongs to the executor. |
 | `statedir`           | `VmDir` — the per-VM on-disk layout (`<base>/vms/<vm-id>/`), API socket + log paths, and the jailer chroot target. |
 | `transfer`           | `send_files`/`recv_files` — stream snapshot files between hosts, framed and chunked with a per-file CRC32. Transport-agnostic (works over any stream), tested over an in-memory buffer with real temp files. |
 

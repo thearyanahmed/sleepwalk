@@ -62,6 +62,13 @@ impl AppLayer {
         self.gated = false;
     }
 
+    /// The turn currently reported in flight, if any. The hold-out turn when the
+    /// app layer is what keeps a drain from reaching quiescence.
+    #[must_use]
+    pub fn in_flight(&self) -> Option<TurnId> {
+        self.in_flight
+    }
+
     /// Quiet iff new turns are gated and none is in flight.
     #[must_use]
     pub fn is_quiet(&self) -> bool {

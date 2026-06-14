@@ -11,6 +11,9 @@
 //! - [`vm::Vm`] — the lifecycle orchestrator (boot / pause / resume / shutdown)
 //!   that enforces a legal operation order.
 //! - [`statedir::VmDir`] — the per-VM on-disk layout and jailer chroot target.
+//! - [`drain::DrainCoordinator`] — folds the guest's wire signals plus locally
+//!   sampled infra/storage state into a [`drain::DrainVerdict`] (the host half
+//!   of the drain protocol; verified, not assumed).
 //!
 //! Jailer spawn + process teardown and the end-to-end test against a real
 //! Firecracker require `/dev/kvm` and land in a later slice; the logic here is
@@ -19,6 +22,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod drain;
 pub mod firecracker;
 pub mod pseudo_firecracker;
 pub mod quiesce;
@@ -26,6 +30,7 @@ pub mod statedir;
 pub mod transfer;
 pub mod vm;
 
+pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
     Firecracker, FirecrackerApi, FirecrackerError, MemBackend, SnapshotSource, SnapshotTarget,
 };
