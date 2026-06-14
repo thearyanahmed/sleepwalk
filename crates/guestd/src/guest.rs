@@ -12,8 +12,13 @@
 //!
 //! The drain gate is the guest's half of the race rule (`docs/protocol.md`): a
 //! turn already in flight when a drain arrives is reported in the `DrainAck` and
-//! is never cut short; turns that arrive *after* the gate closes are refused
-//! ([`StartOutcome::Gated`]) and replay after resume.
+//! is never cut short; turns that arrive *after* the gate closes are not run but
+//! are *queued in-guest* ([`StartOutcome::Queued`]) and replayed once the gate
+//! reopens — either after a [`resume`](Guest::resume) on the target host, or
+//! after a [`DrainCancel`](proto::HostToGuest::DrainCancel) aborts the
+//! migration. The backlog is plain in-RAM state, so it survives the snapshot and
+//! travels with the VM. This is what "zero dropped turns" in the race rule
+//! means: a gated turn is deferred, never lost.
 
 use std::collections::BTreeMap;
 
@@ -27,9 +32,10 @@ use crate::channel::{ChannelError, GuestChannel};
 pub enum StartOutcome {
     /// The turn started; here is its id (`TurnStarted` was sent).
     Started(TurnId),
-    /// The drain gate is closed — the turn was refused and should be replayed
-    /// after the VM resumes on the target host. Nothing was sent.
-    Gated,
+    /// The drain gate is closed — the turn was not run but was queued in-guest.
+    /// It will replay (via [`replay_next`](Guest::replay_next)) once the gate
+    /// reopens on resume or drain-cancel. Nothing was sent on the wire.
+    Queued,
 }
 
 /// Why a supervisor operation failed.
@@ -55,6 +61,11 @@ pub enum GuestError {
     /// `end_turn` was called with no turn in flight.
     #[error("no turn in flight to end")]
     NoTurnInFlight,
+
+    /// `replay_next` was called while the drain gate is still closed. Queued
+    /// turns may only replay once the gate has reopened (resume or cancel).
+    #[error("cannot replay a queued turn while the drain gate is closed")]
+    GatedReplay,
 }
 
 /// The in-VM supervisor for one VM.
@@ -66,8 +77,13 @@ pub struct Guest<C: GuestChannel> {
     secrets: BTreeMap<String, String>,
     next_turn: TurnId,
     in_flight: Option<TurnId>,
-    /// True once a `DrainRequest` has closed the gate; new turns are refused.
+    /// True once a `DrainRequest` has closed the gate; new turns are queued.
     gated: bool,
+    /// Backlog of turns refused while gated, awaiting replay once the gate
+    /// reopens. Synthetic turns are interchangeable work units, so a count is
+    /// enough to prove none were dropped; this becomes a queue of work items
+    /// once turns carry real per-turn tasks (the real-agent profile).
+    queued: u32,
 }
 
 impl<C: GuestChannel> Guest<C> {
@@ -81,6 +97,7 @@ impl<C: GuestChannel> Guest<C> {
             next_turn: TurnId::FIRST,
             in_flight: None,
             gated: false,
+            queued: 0,
         }
     }
 
@@ -90,10 +107,16 @@ impl<C: GuestChannel> Guest<C> {
         self.in_flight
     }
 
-    /// Whether the drain gate is closed (new turns refused).
+    /// Whether the drain gate is closed (new turns queued, not run).
     #[must_use]
     pub fn is_gated(&self) -> bool {
         self.gated
+    }
+
+    /// How many turns are queued for replay (refused while gated).
+    #[must_use]
+    pub fn queued_turns(&self) -> u32 {
+        self.queued
     }
 
     /// The secrets received at boot (the env handed to the workload).
@@ -122,7 +145,7 @@ impl<C: GuestChannel> Guest<C> {
         }
     }
 
-    /// Start a turn. Refused with [`StartOutcome::Gated`] if the drain gate is
+    /// Start a turn. Queued with [`StartOutcome::Queued`] if the drain gate is
     /// closed; otherwise assigns the next id, marks it in flight, and sends
     /// `TurnStarted`.
     pub async fn start_turn(&mut self, now: Timestamp) -> Result<StartOutcome, GuestError> {
@@ -130,15 +153,53 @@ impl<C: GuestChannel> Guest<C> {
             return Err(GuestError::TurnInProgress { in_flight });
         }
         if self.gated {
-            return Ok(StartOutcome::Gated);
+            self.queued += 1;
+            return Ok(StartOutcome::Queued);
         }
+        Ok(StartOutcome::Started(self.begin_turn(now).await?))
+    }
+
+    /// Replay one turn from the backlog that built up while the gate was closed.
+    ///
+    /// Returns the started turn's id, or `None` when the backlog is empty. The
+    /// gate must be open (post-resume or post-cancel) and no turn may be in
+    /// flight — replaying is sequential, exactly like normal turn execution.
+    pub async fn replay_next(&mut self, now: Timestamp) -> Result<Option<TurnId>, GuestError> {
+        if let Some(in_flight) = self.in_flight {
+            return Err(GuestError::TurnInProgress { in_flight });
+        }
+        if self.gated {
+            return Err(GuestError::GatedReplay);
+        }
+        if self.queued == 0 {
+            return Ok(None);
+        }
+        self.queued -= 1;
+        Ok(Some(self.begin_turn(now).await?))
+    }
+
+    /// Wake on the target host after a restore: emit `Resumed` (the clock fix-up
+    /// trigger) and reopen the gate so the queued backlog can replay. Any turn
+    /// that was in flight at snapshot time is still in flight here — the
+    /// snapshot froze it mid-turn — so `resume` does not touch `in_flight`.
+    pub async fn resume(&mut self, now: Timestamp) -> Result<(), GuestError> {
+        self.chan.send(GuestToHost::Resumed { ts: now }).await?;
+        self.gated = false;
+        Ok(())
+    }
+
+    /// Assign the next turn id, mark it in flight, and emit `TurnStarted`. The
+    /// shared core of [`start_turn`](Self::start_turn) and
+    /// [`replay_next`](Self::replay_next); callers enforce the gate and the
+    /// no-overlap precondition.
+    async fn begin_turn(&mut self, now: Timestamp) -> Result<TurnId, GuestError> {
         let turn_id = self.next_turn;
         self.next_turn = self.next_turn.next();
         self.in_flight = Some(turn_id);
         self.chan
             .send(GuestToHost::TurnStarted { turn_id, ts: now })
             .await?;
-        Ok(StartOutcome::Started(turn_id))
+        Ok(turn_id)
     }
 
     /// End the in-flight turn: send `TurnEnded` and clear it.
@@ -167,7 +228,9 @@ impl<C: GuestChannel> Guest<C> {
                 Ok(())
             }
             HostToGuest::DrainCancel => {
-                // Migration aborted: reopen the gate, release queued turns.
+                // Migration aborted: reopen the gate. The queued backlog stays
+                // put and replays on this same host (via `replay_next`) — the
+                // turns were deferred, not dropped.
                 self.gated = false;
                 Ok(())
             }
@@ -283,13 +346,96 @@ mod tests {
             g.chan.sent().as_slice(),
             [GuestToHost::DrainAck { in_flight: None }]
         ));
-        // A turn arriving after the gate closes is refused, not started.
+        // A turn arriving after the gate closes is queued, not started.
         assert_eq!(
             g.start_turn(ts(1)).await.expect("gated start"),
-            StartOutcome::Gated
+            StartOutcome::Queued
         );
-        // Nothing new was sent for the gated turn.
+        assert_eq!(g.queued_turns(), 1);
+        // Nothing new was sent for the queued turn.
         assert_eq!(g.chan.sent().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn queued_turns_replay_after_resume_with_continuing_ids() {
+        let mut g = guest();
+        // One turn runs and completes before the drain.
+        let StartOutcome::Started(t0) = g.start_turn(ts(1)).await.expect("start") else {
+            panic!("should start");
+        };
+        g.end_turn(ts(2)).await.expect("end");
+
+        // Drain gates the gate; two turns arrive and are queued.
+        g.handle(HostToGuest::DrainRequest {
+            deadline: Duration::from_secs(5),
+        })
+        .await
+        .expect("drain");
+        assert_eq!(g.start_turn(ts(3)).await.expect("q"), StartOutcome::Queued);
+        assert_eq!(g.start_turn(ts(4)).await.expect("q"), StartOutcome::Queued);
+        assert_eq!(g.queued_turns(), 2);
+
+        // Replaying while gated is refused — the gate must reopen first.
+        assert!(matches!(
+            g.replay_next(ts(5)).await.expect_err("gated"),
+            GuestError::GatedReplay
+        ));
+
+        // Resume on the target: emits Resumed, reopens the gate.
+        g.resume(ts(6)).await.expect("resume");
+        assert!(!g.is_gated());
+        assert!(matches!(
+            g.chan.sent().last(),
+            Some(GuestToHost::Resumed { .. })
+        ));
+
+        // The backlog replays in order; ids continue monotonically from t0.
+        let r0 = g.replay_next(ts(7)).await.expect("replay").expect("one");
+        g.end_turn(ts(8)).await.expect("end");
+        let r1 = g.replay_next(ts(9)).await.expect("replay").expect("two");
+        g.end_turn(ts(10)).await.expect("end");
+        assert_eq!(g.replay_next(ts(11)).await.expect("drained"), None);
+
+        assert_eq!(r0, t0.next());
+        assert_eq!(r1, t0.next().next());
+        assert_eq!(g.queued_turns(), 0);
+    }
+
+    #[tokio::test]
+    async fn drain_cancel_lets_the_backlog_replay_on_the_same_host() {
+        let mut g = guest();
+        g.handle(HostToGuest::DrainRequest {
+            deadline: Duration::from_secs(5),
+        })
+        .await
+        .expect("drain");
+        assert_eq!(g.start_turn(ts(1)).await.expect("q"), StartOutcome::Queued);
+
+        // Cancel reopens the gate without losing the queued turn.
+        g.handle(HostToGuest::DrainCancel).await.expect("cancel");
+        assert_eq!(g.queued_turns(), 1);
+        let replayed = g.replay_next(ts(2)).await.expect("replay").expect("one");
+        assert_eq!(replayed, TurnId::FIRST);
+        assert_eq!(g.queued_turns(), 0);
+    }
+
+    #[tokio::test]
+    async fn replay_is_refused_while_a_turn_is_in_flight() {
+        let mut g = guest();
+        g.handle(HostToGuest::DrainRequest {
+            deadline: Duration::from_secs(5),
+        })
+        .await
+        .expect("drain");
+        g.start_turn(ts(1)).await.expect("q"); // queued
+        g.handle(HostToGuest::DrainCancel).await.expect("cancel");
+
+        // Start a fresh turn, then a replay must be refused until it ends.
+        g.start_turn(ts(2)).await.expect("start");
+        assert!(matches!(
+            g.replay_next(ts(3)).await.expect_err("in flight"),
+            GuestError::TurnInProgress { .. }
+        ));
     }
 
     #[tokio::test]

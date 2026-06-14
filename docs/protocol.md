@@ -82,8 +82,20 @@ Cleanup ◀── CutOver ◀── Restoring ◀──────────�
 Precedence: **in-flight turn > migration > queued turn.** A turn already running
 when a `DrainRequest` arrives wins — the migration waits up to `deadline_ms`,
 then `DrainCancel`s back to `Stable`. New turns that arrive after the drain are
-gated and replayed after resume on the target. The turn is never sacrificed to a
-migration. Validated by the turn-vs-drain chaos test.
+**queued in-guest**, not dropped: each is held as backlog and **replayed** once
+the gate reopens — after `Resumed` on the target host (the common path) or after
+a `DrainCancel` un-gates on the source (abort path). "Zero dropped turns" is
+exactly this: a gated turn is deferred, never lost. The turn is never sacrificed
+to a migration. A turn-start that races the drain in the same instant resolves by
+the guest's local processing order: if `TurnStarted` was emitted before
+`DrainRequest` was handled, it counts as in-flight and wins.
+
+Validated by the turn-vs-drain chaos test: a drain dropped at random offsets
+across a stream of turns, over many seeded interleavings, asserting (1) every
+attempted turn eventually runs (zero dropped), (2) the `DrainAck`'s `in_flight`
+matches the turn actually running at the drain instant, and (3) no turn starts
+while the gate is closed. The real-VM wall-clock version (100 runs on `/dev/kvm`)
+is the integration-tier counterpart.
 
 ## Secrets
 
