@@ -33,6 +33,9 @@ required-features = ["kvm"]
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
+# anyhow is used only by the migration binaries (bins may use anyhow; the library
+# modules use thiserror).
+anyhow.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "fs", "io-util", "time"] }
 hyper = { workspace = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, features = ["tokio"] }
