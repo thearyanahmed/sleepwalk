@@ -17,9 +17,11 @@ wire messages below:
 - **Wrap mode (zero code).** The stock `guestd` supervises an arbitrary command
   and *infers* turn boundaries from its **stdout**: a line equal to a configured
   start marker opens a turn (`TurnStarted`), a line equal to the end marker
-  closes it (`TurnEnded`). Set `SLEEPWALK_WRAP_CMD` to the command (run under
-  `/bin/sh -c`); `SLEEPWALK_WRAP_START` / `SLEEPWALK_WRAP_END` override the
-  default markers (`@@TURN_START@@` / `@@TURN_END@@`). Any other output is passed
+  closes it (`TurnEnded`). Set `SLEEPWALK_WRAP_CMD` to the command — or, for a
+  baked rootfs with no shell, drop it in `/etc/sleepwalk/wrap-cmd`. The command
+  is exec'd directly (argv split on whitespace; the minimal guest has no shell).
+  `SLEEPWALK_WRAP_START` / `SLEEPWALK_WRAP_END` override the default markers
+  (`@@TURN_START@@` / `@@TURN_END@@`). Any other output is passed
   through to guestd's log. Good for job-shaped workloads that can print a line at
   the edges of a unit of work. The wrapped process keeps running across a
   migration — its in-RAM state is carried in the snapshot — so it must not assume

@@ -204,12 +204,23 @@ mod linux {
         }
     }
 
-    /// Read the wrap-mode configuration from the environment, or `None` for the
-    /// host-driven mode. `SLEEPWALK_WRAP_CMD` selects wrap mode and is the
-    /// command run under `/bin/sh -c`; `SLEEPWALK_WRAP_START` / `_END` override
-    /// the default turn-boundary markers.
+    /// Path the rootfs can drop a wrap command into when no env is set — how the
+    /// minimal guest image (which has no shell to export env) selects wrap mode.
+    const WRAP_CMD_FILE: &str = "/etc/sleepwalk/wrap-cmd";
+
+    /// Resolve the wrap-mode configuration, or `None` for host-driven mode.
+    ///
+    /// The command comes from `SLEEPWALK_WRAP_CMD`, or failing that the contents
+    /// of [`WRAP_CMD_FILE`] (so a baked rootfs needs no env). It is exec'd
+    /// directly, split on whitespace — there is no shell in the minimal guest, so
+    /// shell syntax is not available. `SLEEPWALK_WRAP_START` / `_END` override the
+    /// default turn-boundary markers.
     fn wrap_config_from_env() -> Option<(String, WrapConfig)> {
-        let cmd = std::env::var("SLEEPWALK_WRAP_CMD").ok()?;
+        let cmd = std::env::var("SLEEPWALK_WRAP_CMD")
+            .ok()
+            .or_else(|| std::fs::read_to_string(WRAP_CMD_FILE).ok())
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())?;
         let mut cfg = WrapConfig::default();
         if let Ok(s) = std::env::var("SLEEPWALK_WRAP_START") {
             cfg.start_marker = s;
@@ -220,8 +231,9 @@ mod linux {
         Some((cmd, cfg))
     }
 
-    /// Spawn the wrapped command with the boot secrets as its environment, and
-    /// return its handle plus a line reader over its stdout.
+    /// Spawn the wrapped command (exec'd directly, argv split on whitespace) with
+    /// the boot secrets as its environment, and return its handle plus a line
+    /// reader over its stdout.
     fn spawn_child<C: GuestChannel>(
         cmd: &str,
         g: &Guest<C>,
@@ -229,8 +241,12 @@ mod linux {
         Child,
         tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     )> {
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(cmd).stdout(Stdio::piped());
+        let mut argv = cmd.split_whitespace();
+        let program = argv
+            .next()
+            .ok_or_else(|| std::io::Error::other("empty wrap command"))?;
+        let mut command = Command::new(program);
+        command.args(argv).stdout(Stdio::piped());
         // Secrets reach the workload via the environment only — never the rootfs,
         // never the kernel cmdline (visible in /proc/cmdline and host `ps`).
         for (k, v) in g.secrets() {
