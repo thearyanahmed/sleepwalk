@@ -133,11 +133,12 @@ async fn vms_spawn(
     let mib: u32 = query_param(req.uri().query(), "mib")
         .and_then(|s| s.parse().ok())
         .unwrap_or(128);
+    let networked = query_param(req.uri().query(), "net").as_deref() == Some("1");
     let art = match hostd::discover_artifacts() {
         Ok(a) => a,
         Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
     };
-    match state.registry.spawn(&art, mib).await {
+    match state.registry.spawn(&art, mib, networked).await {
         Ok(id) => text(StatusCode::OK, &format!("{{\"vm\":\"{id}\"}}\n")),
         Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
     }

@@ -32,6 +32,8 @@ pub mod guestlink;
 pub mod guestload;
 #[cfg(target_os = "linux")]
 pub mod migrate;
+#[cfg(target_os = "linux")]
+pub mod net;
 pub mod process;
 pub mod pseudo_firecracker;
 pub mod quiesce;

@@ -23,7 +23,7 @@ use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::firecracker::{
-    BootSource, Drive, Firecracker, FirecrackerApi, MachineConfig, VsockConfig,
+    BootSource, Drive, Firecracker, FirecrackerApi, MachineConfig, NetworkConfig, VsockConfig,
 };
 use crate::migrate::{Artifacts, MigrateError};
 use crate::process::FcProcess;
@@ -36,6 +36,13 @@ const BOOT_ARGS: &str = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw
 
 /// Per-process sequence so concurrent spawns get distinct work dirs / sockets.
 static SEQ: AtomicU64 = AtomicU64::new(0);
+/// Per-process tap index, giving each networked VM a distinct tap / MAC / IP.
+static NET_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Wrap any error as an `io::Error` (for folding into [`MigrateError::Io`]).
+fn io_other<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> std::io::Error {
+    std::io::Error::other(e)
+}
 
 /// The UFFD page server that backs a VM restored on this host. The serving
 /// thread must outlive the restore: pages are faulted from the snapshot file
@@ -67,17 +74,22 @@ pub struct RunningVm {
     pub mib: u32,
     /// The UFFD page server, present only for a VM restored from a migration.
     pub uffd: Option<UffdState>,
+    /// The VM's network identity (tap/MAC/IP), present only for a networked VM.
+    pub net: Option<crate::net::NetId>,
 }
 
 impl RunningVm {
-    /// Kill the Firecracker process, stop any UFFD server, and remove the VM's
-    /// work dir and socket. Order matters: the VM is killed first so it stops
-    /// faulting, then the page-server thread is joined, then its files go.
+    /// Kill the Firecracker process, stop any UFFD server, drop the VM's tap, and
+    /// remove its work dir and socket. Order matters: the VM is killed first so it
+    /// stops faulting, then the page-server thread is joined, then its files go.
     pub fn teardown(mut self) {
         let _ = self.proc.kill();
         if let Some(uffd) = self.uffd {
             uffd.stop.store(true, Ordering::Release);
             let _ = uffd.thread.join();
+        }
+        if let Some(net) = &self.net {
+            crate::net::destroy(&net.tap);
         }
         let _ = std::fs::remove_dir_all(&self.work);
         let _ = std::fs::remove_file(&self.vsock_uds);
@@ -112,17 +124,37 @@ impl VmRegistry {
         }
     }
 
-    /// Boot a `mib`-sized guestd VM, register it, and return its id.
+    /// Boot a `mib`-sized guestd VM, register it, and return its id. With
+    /// `networked`, attach a tap on the shared bridge and give the guest a stable
+    /// MAC/IP (it can then reach the network and be reached).
     ///
     /// # Errors
-    /// If spawning Firecracker or any boot-configuration step fails.
-    pub async fn spawn(&self, art: &Artifacts, mib: u32) -> Result<VmId, MigrateError> {
+    /// If spawning Firecracker, plumbing the network, or any boot step fails.
+    pub async fn spawn(
+        &self,
+        art: &Artifacts,
+        mib: u32,
+        networked: bool,
+    ) -> Result<VmId, MigrateError> {
         let id = VmId::new();
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
         let work = std::env::temp_dir().join(format!("sleepwalk-vm-{pid}-{seq}"));
         std::fs::create_dir_all(&work).map_err(|e| io("create vm work dir", e))?;
         let vsock_uds = std::env::temp_dir().join(format!("sleepwalk-vm-vsock-{pid}-{seq}.sock"));
+
+        // Plumb the network first so its address goes into the boot args.
+        let net = if networked {
+            let idx = NET_SEQ.fetch_add(1, Ordering::Relaxed) as u32;
+            Some(crate::net::create(idx).map_err(|e| io("plumb vm network", io_other(e)))?)
+        } else {
+            None
+        };
+        let mut boot_args = BOOT_ARGS.to_owned();
+        if let Some(n) = &net {
+            boot_args.push(' ');
+            boot_args.push_str(&crate::net::boot_arg(n));
+        }
 
         let proc = FcProcess::spawn(
             &art.fc_bin,
@@ -139,7 +171,7 @@ impl VmRegistry {
         .await?;
         fc.configure_boot_source(BootSource {
             kernel_image: art.kernel.clone(),
-            boot_args: BOOT_ARGS.to_owned(),
+            boot_args,
         })
         .await?;
         fc.configure_drive(Drive {
@@ -154,6 +186,14 @@ impl VmRegistry {
             uds_path: vsock_uds.clone(),
         })
         .await?;
+        if let Some(n) = &net {
+            fc.configure_network(NetworkConfig {
+                iface_id: "eth0".to_owned(),
+                host_dev_name: n.tap.clone(),
+                guest_mac: n.mac.clone(),
+            })
+            .await?;
+        }
         fc.boot().await?;
 
         self.vms.lock().await.insert(
@@ -166,6 +206,7 @@ impl VmRegistry {
                 vsock_uds,
                 mib,
                 uffd: None,
+                net,
             },
         );
         Ok(id)

@@ -427,6 +427,9 @@ async fn receive_and_restore(
             stop,
             thread: serve,
         }),
+        // Re-plumbing a migrated VM's network onto the target host is the
+        // cross-host networking step; a restored VM has no tap here yet.
+        net: None,
     })
 }
 
