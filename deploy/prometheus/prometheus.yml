@@ -1,0 +1,12 @@
+# Prometheus scrape config for the sleepwalk hostd daemons.
+# Targets are listed in targets.json (file-based discovery, hot-reloaded), so you
+# can edit hosts without restarting Prometheus.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: hostd
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets.json

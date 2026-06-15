@@ -1,0 +1,6 @@
+[
+  {
+    "labels": { "job": "hostd" },
+    "targets": ["host.docker.internal:8080"]
+  }
+]

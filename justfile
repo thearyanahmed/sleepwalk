@@ -131,6 +131,12 @@ e2e:
 demo-agent:
     @echo "not implemented yet (agent demo)" && exit 1
 
-# Prometheus + Grafana stack.
+# Prometheus + Grafana stack (Grafana at http://localhost:3000). Edit
+# deploy/prometheus/targets.json (gitignored) to point at your hostd daemons.
 observe:
-    @echo "not implemented yet (observability stack)" && exit 1
+    cp -n deploy/prometheus/targets.json.example deploy/prometheus/targets.json 2>/dev/null || true
+    docker compose -f deploy/docker-compose.yml up
+
+# Tear the observability stack down.
+observe-down:
+    docker compose -f deploy/docker-compose.yml down
