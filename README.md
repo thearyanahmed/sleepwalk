@@ -4,6 +4,75 @@ Zero-perceived-downtime rebalancing for [Firecracker](https://firecracker-microv
 
 **Status:** pre-alpha, pre-`v0.1.0` — under active construction, nothing here is stable yet. Run `just --list` for the current entry points.
 
+## Architecture
+
+A `rebalancer` control plane drives a `hostd` daemon on each host. Each `hostd`
+runs Firecracker microVMs; inside each VM, `guestd` (PID 1) speaks the guest
+protocol over vsock — reporting turn boundaries, holding the drain gate, taking
+secrets at boot. When a host gets hot, the rebalancer picks an idle VM and moves
+it to a cooler host: snapshot on the source, stream memory + vmstate over the
+network, lazily restore on the target via userfaultfd. The move happens only at
+*verified quiescence*, so no live turn is ever interrupted.
+
+```
+                         ┌──────────────────────────────────────────┐
+                         │                rebalancer                  │
+                         │  placement · pressure · migration FSM      │
+                         └───────┬───────────────────────────┬───────┘
+                            HTTP │                            │ HTTP
+                  ┌──────────────▼─────────────┐  ┌───────────▼────────────────┐
+                  │          hostd (A)          │  │          hostd (B)          │
+                  │  Firecracker API · UFFD     │  │  Firecracker API · UFFD     │
+                  │  snapshot/transfer · drain  │  │  snapshot/transfer · drain  │
+                  └──────────────┬──────────────┘  └─────────────┬───────────────┘
+                           vsock │                                │ vsock
+                  ┌──────────────▼──────────────┐  ┌─────────────▼───────────────┐
+                  │          microVM            │  │          microVM            │
+                  │  ┌────────────────────────┐ │  │  ┌────────────────────────┐ │
+                  │  │ guestd (PID 1)         │ │  │  │ guestd (PID 1)         │ │
+                  │  │  └─ workload / turns   │ │  │  │  └─ workload / turns   │ │
+                  │  └────────────────────────┘ │  │  └────────────────────────┘ │
+                  └─────────────────────────────┘  └─────────────────────────────┘
+                                 │                                ▲
+                                 │   snapshot stream (mem + vmstate, TCP)
+                                 └────────────────────────────────┘
+                                       relocate at quiescence
+```
+
+### Workspace crates
+
+| crate | role |
+|-------|------|
+| `proto` | the public contract: vsock messages, hostd API, the migration state machine as a typestate (illegal transitions don't compile) |
+| `guestd` | in-VM supervisor (PID 1): vsock handshake, turn signals, drain gate, boot secrets, post-restore clock fix-up. Native mode (workload speaks the protocol) or wrap mode (turn boundaries inferred from a wrapped process's stdout) |
+| `hostd` | per-host daemon: Firecracker lifecycle, the userfaultfd page server, snapshot transfer, the layered quiescence detector, `/metrics` |
+| `rebalancer` | control plane: host pressure, victim selection, and the migration FSM driver |
+| `harness` | open-loop load generator + latency recorder; also drives the turn-vs-drain chaos test |
+| `cli` | the `sleepwalk` binary — the published front door wrapping the daemons |
+
+### How a migration works
+
+The migration state machine is owned by the rebalancer; the typestate makes
+quiescence a precondition of snapshotting at compile time.
+
+```
+Stable ─▶ Intent ─▶ Draining ─▶ Quiescent ─▶ Snapshotting ─▶ Transferring
+  ▲          │          │                                          │
+  │          └─ abort ──┴── (timeout / turn-in-flight too long)    │
+  │                                                                ▼
+Cleanup ◀── CutOver ◀── Restoring ◀────────────────────────────────┘
+```
+
+Abort is legal anywhere **before** `Snapshotting` and returns the VM to `Stable`
+on the source; once snapshotting starts, the migration runs to completion or
+resumes on the source. **Quiescence is verified, not assumed** — a VM is movable
+only when all three layers agree: the app layer (guestd has acked the drain with
+no turn in flight), the infra layer (vCPU + virtio queues quiet), and the storage
+layer (workspace sync caught up). The **race rule** is normative: an in-flight
+turn beats a migration, which beats a queued turn — a turn is never sacrificed to
+a move. Full message-level detail is in
+[`docs/protocol.md`](docs/protocol.md).
+
 ## Local development
 
 Firecracker needs KVM, so development happens inside a Linux VM with `/dev/kvm`. On
