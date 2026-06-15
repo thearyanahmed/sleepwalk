@@ -12,6 +12,7 @@
 
 use std::process::Command;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// The shared bridge per-VM taps attach to (matches `scripts/net-host.sh`).
@@ -37,8 +38,10 @@ pub enum NetError {
     OutOfRange(u32),
 }
 
-/// A VM's network identity: its host tap, guest MAC, and guest IP.
-#[derive(Debug, Clone)]
+/// A VM's network identity: its host tap, guest MAC, and guest IP. Serializable
+/// because it travels with a migration (the target re-creates the same tap before
+/// restoring, so the guest keeps its MAC/IP on the new host).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetId {
     /// The host tap device backing the VM's interface.
     pub tap: String,
@@ -57,14 +60,25 @@ pub fn create(idx: u32) -> Result<NetId, NetError> {
         .checked_add(2)
         .filter(|h| *h <= 254)
         .ok_or(NetError::OutOfRange(idx))?;
-    let ip = format!("10.200.0.{host}");
-    let mac = format!("02:00:00:00:00:{host:02x}");
-    let tap = format!("sw-tap{idx}");
+    let net = NetId {
+        tap: format!("sw-tap{idx}"),
+        mac: format!("02:00:00:00:00:{host:02x}"),
+        ip: format!("10.200.0.{host}"),
+    };
+    create_tap(&net.tap)?;
+    Ok(net)
+}
 
-    run(&["tuntap", "add", &tap, "mode", "tap"])?;
-    run(&["link", "set", &tap, "master", BRIDGE])?;
-    run(&["link", "set", &tap, "up"])?;
-    Ok(NetId { tap, mac, ip })
+/// Create (or re-create) tap `name` on the bridge, up. Used on restore to
+/// re-plumb a migrated VM's tap under the name baked into its snapshot.
+///
+/// # Errors
+/// If an `ip` command fails.
+pub fn create_tap(name: &str) -> Result<(), NetError> {
+    run(&["tuntap", "add", name, "mode", "tap"])?;
+    run(&["link", "set", name, "master", BRIDGE])?;
+    run(&["link", "set", name, "up"])?;
+    Ok(())
 }
 
 /// Tear down a VM's tap (best effort — used on teardown).

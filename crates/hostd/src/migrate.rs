@@ -217,7 +217,7 @@ pub async fn migrate_source(art: &Artifacts, addr: &str) -> Result<SourceTiming,
     }
     drop(link); // close the control link before pausing
 
-    let timing = snapshot_and_send(&fc, &work, addr).await?;
+    let timing = snapshot_and_send(&fc, &work, addr, &[]).await?;
     let _ = proc.kill();
     let _ = std::fs::remove_dir_all(&work);
     let _ = std::fs::remove_file(&vsock_uds);
@@ -235,6 +235,7 @@ async fn snapshot_and_send(
     fc: &Firecracker,
     work: &Path,
     addr: &str,
+    extra: &[OutboundFile],
 ) -> Result<SourceTiming, MigrateError> {
     let mem = work.join("mem.snap");
     let state = work.join("state.snap");
@@ -247,20 +248,18 @@ async fn snapshot_and_send(
     })
     .await?;
     let t1 = Instant::now();
-    send_snapshot(
-        addr,
-        &[
-            OutboundFile {
-                name: "mem.snap".to_owned(),
-                path: mem.clone(),
-            },
-            OutboundFile {
-                name: "state.snap".to_owned(),
-                path: state,
-            },
-        ],
-    )
-    .await?;
+    let mut files = vec![
+        OutboundFile {
+            name: "mem.snap".to_owned(),
+            path: mem.clone(),
+        },
+        OutboundFile {
+            name: "state.snap".to_owned(),
+            path: state,
+        },
+    ];
+    files.extend_from_slice(extra);
+    send_snapshot(addr, &files).await?;
     let t2 = Instant::now();
 
     let bytes = std::fs::metadata(&mem).map(|m| m.len()).unwrap_or(0);
@@ -318,7 +317,31 @@ pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome
     }
     drop(link);
 
-    match snapshot_and_send(&vm.fc, &vm.work, addr).await {
+    // A networked VM carries its identity (tap/MAC/IP) alongside the snapshot so
+    // the target can re-create the same tap before restoring — the guest keeps its
+    // MAC/IP on the new host, and a client's connection follows it.
+    let mut extra = Vec::new();
+    if let Some(net) = &vm.net {
+        let path = vm.work.join("net.json");
+        match serde_json::to_vec(net) {
+            Ok(bytes) => {
+                if let Err(e) = std::fs::write(&path, bytes) {
+                    vm.teardown();
+                    return Err(io("write net identity", e));
+                }
+                extra.push(OutboundFile {
+                    name: "net.json".to_owned(),
+                    path,
+                });
+            }
+            Err(e) => {
+                vm.teardown();
+                return Err(io("serialize net identity", std::io::Error::other(e)));
+            }
+        }
+    }
+
+    match snapshot_and_send(&vm.fc, &vm.work, addr, &extra).await {
         Ok(timing) => {
             telemetry::migration_ok(timing.snapshot + timing.transfer, timing.bytes);
             vm.teardown();
@@ -369,12 +392,31 @@ async fn receive_and_restore(
     std::fs::create_dir_all(&work).map_err(|e| io("create work dir", e))?;
 
     let files = recv_snapshot(listener, &work).await?;
-    if files.len() != 2 {
+    // mem.snap + state.snap, plus an optional net.json for a networked VM.
+    if files.len() != 2 && files.len() != 3 {
         return Err(MigrateError::Snapshot(format!(
-            "expected 2 files, got {}",
+            "expected 2 or 3 files, got {}",
             files.len()
         )));
     }
+
+    // Re-plumb the network before loading: a networked VM's snapshot names a host
+    // tap (`host_dev_name`) that Firecracker re-binds on load, so the tap must
+    // exist on this host first — created under the same name, on the overlay
+    // bridge, so the guest keeps its MAC/IP.
+    let net_path = work.join("net.json");
+    let net = if net_path.exists() {
+        let bytes = std::fs::read(&net_path).map_err(|e| io("read net identity", e))?;
+        let net: crate::net::NetId = serde_json::from_slice(&bytes)
+            .map_err(|e| io("parse net identity", std::io::Error::other(e)))?;
+        if let Err(e) = crate::net::create_tap(&net.tap) {
+            let _ = std::fs::remove_dir_all(&work);
+            return Err(io("re-plumb vm tap", std::io::Error::other(e)));
+        }
+        Some(net)
+    } else {
+        None
+    };
 
     let uffd_sock = work.join("uffd.sock");
     let handler = UffdRestoreHandler::bind(&uffd_sock).map_err(|e| io("bind uffd socket", e))?;
@@ -403,10 +445,14 @@ async fn receive_and_restore(
         })
         .await;
     if let Err(e) = load {
-        // Restore failed: stop the page server, reap the half-started VM, clean up.
+        // Restore failed: stop the page server, reap the half-started VM, drop the
+        // re-plumbed tap, clean up.
         let _ = proc.kill();
         stop.store(true, Ordering::Release);
         let _ = serve.join();
+        if let Some(net) = &net {
+            crate::net::destroy(&net.tap);
+        }
         let _ = std::fs::remove_dir_all(&work);
         return Err(MigrateError::from(e));
     }
@@ -427,9 +473,9 @@ async fn receive_and_restore(
             stop,
             thread: serve,
         }),
-        // Re-plumbing a migrated VM's network onto the target host is the
-        // cross-host networking step; a restored VM has no tap here yet.
-        net: None,
+        // Present for a networked VM: the tap was re-plumbed above under the
+        // snapshot's name, so the guest kept its MAC/IP on this host.
+        net,
     })
 }
 
