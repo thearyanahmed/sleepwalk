@@ -17,7 +17,7 @@
   "title": "sleepwalk — fleet, VMs & load",
   "uid": "sleepwalk-fleet",
   "tags": ["sleepwalk"],
-  "timezone": "browser",
+  "timezone": "utc",
   "time": { "from": "now-30m", "to": "now" },
   "refresh": "5s",
   "schemaVersion": 39,
@@ -55,9 +55,11 @@
       "title": "CPU busy % (by host)",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
+      "description": "Guest-side busy % (100 - idle) and steal % per host. Steal is CPU the hypervisor gave a neighbor — it explains gaps vs. DigitalOcean's host-side insights graph.",
       "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 15 } }, "overrides": [] },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 - (avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)", "legendFormat": "{{host}}" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 - (avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) * 100)", "legendFormat": "busy {{host}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "avg by (host) (rate(node_cpu_seconds_total{mode=\"steal\"}[1m])) * 100", "legendFormat": "steal {{host}}" }
       ]
     },
     {
