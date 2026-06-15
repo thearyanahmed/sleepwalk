@@ -26,7 +26,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use http_body_util::{BodyExt, Empty};
 use hyper::body::Bytes;
-use proto::{HostId, VmId};
+use proto::{CompatClass, HostId, VmId};
 use rebalancer::{DaemonApi, Fleet, HostEndpoint, Placement, Pressure, rebalance_once};
 use serde::Deserialize;
 
@@ -57,6 +57,7 @@ struct StatusResp {
     host: String,
     vms: Vec<String>,
     pressure: f64,
+    compat: CompatClass,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -87,6 +88,7 @@ async fn main() -> Result<()> {
         let mut placement = Placement::new();
         let mut pressure = BTreeMap::new();
         let mut idle = BTreeMap::new();
+        let mut compat = BTreeMap::new();
         for h in &cfg.hosts {
             let host = HostId::new(&h.id);
             let st = fetch_status(&h.control_url)
@@ -100,6 +102,8 @@ async fn main() -> Result<()> {
                 // every VM as equally idle so the victim choice is deterministic.
                 idle.insert(id, Duration::from_secs(60));
             }
+            // The host's CPU/TSC class gates which moves are even attemptable.
+            compat.insert(host, st.compat);
         }
 
         match rebalance_once(
@@ -107,6 +111,7 @@ async fn main() -> Result<()> {
             &pressure,
             &idle,
             Pressure::new(cfg.watermark),
+            &compat,
             &fleet,
             &api,
         )

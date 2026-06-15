@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
 
-use proto::{HostId, VmId};
+use proto::{CompatClass, HostId, VmId};
 use thiserror::Error;
 
 use crate::placement::{Placement, Pressure, Rebalance, pick_victim};
@@ -108,10 +108,11 @@ pub async fn rebalance_once(
     pressure: &BTreeMap<HostId, Pressure>,
     idle: &BTreeMap<VmId, Duration>,
     high_watermark: Pressure,
+    compat: &BTreeMap<HostId, CompatClass>,
     fleet: &Fleet,
     api: &impl DaemonApi,
 ) -> Result<Option<Rebalance>, CtlError> {
-    let Some(mv) = pick_victim(placement, pressure, idle, high_watermark) else {
+    let Some(mv) = pick_victim(placement, pressure, idle, high_watermark, compat) else {
         return Ok(None);
     };
     let target = fleet.endpoint(&mv.to)?;
@@ -195,6 +196,17 @@ mod tests {
         HostId::new(name)
     }
 
+    /// `a` and `b` in one compatible class.
+    fn compat() -> BTreeMap<HostId, CompatClass> {
+        let c = CompatClass {
+            vendor: "GenuineIntel".to_owned(),
+            model: "Xeon".to_owned(),
+            tsc_khz: 2_000_000,
+            kernel: "6.1.155".to_owned(),
+        };
+        BTreeMap::from([(host("a"), c.clone()), (host("b"), c)])
+    }
+
     fn fleet() -> Fleet {
         let mut f = Fleet::new();
         f.add(
@@ -236,6 +248,7 @@ mod tests {
             &pressure,
             &idle,
             Pressure::new(0.80),
+            &compat(),
             &fleet(),
             &api,
         )
@@ -273,6 +286,7 @@ mod tests {
             &pressure,
             &idle,
             Pressure::new(0.80),
+            &compat(),
             &fleet(),
             &api,
         )
@@ -303,6 +317,7 @@ mod tests {
             &pressure,
             &idle,
             Pressure::new(0.80),
+            &compat(),
             &fleet(),
             &api,
         )
