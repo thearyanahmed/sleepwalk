@@ -19,8 +19,9 @@ use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
 
 use crate::framing::JsonLineChannel;
 
-/// The vsock port guestd listens on; the host connects here.
-pub const DEFAULT_PORT: u32 = 5252;
+/// The vsock port guestd listens on; the host connects here (the protocol
+/// contract, [`proto::GUEST_VSOCK_PORT`]).
+pub const DEFAULT_PORT: u32 = proto::GUEST_VSOCK_PORT;
 
 /// Bind `port` on any CID, accept one host connection, and return a framed
 /// [`GuestChannel`] over it. The guest supervisor runs on the returned channel.

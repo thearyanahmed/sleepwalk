@@ -22,15 +22,21 @@ use tokio::net::TcpListener;
 
 use crate::firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
-    SnapshotSource, SnapshotTarget,
+    SnapshotSource, SnapshotTarget, VsockConfig,
 };
+use crate::guestlink::{DrainState, GuestLink};
 use crate::process::FcProcess;
 use crate::telemetry;
 use crate::transfer::{OutboundFile, TransferError, recv_snapshot, send_snapshot};
 use crate::uffd::{UffdError, UffdRestoreHandler};
 
 const GUEST_MIB: u32 = 256;
-const BOOT_ARGS: &str = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro";
+/// Boot args for the guestd rootfs: ext4 root, read-write, guestd as init.
+const BOOT_ARGS: &str = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/init";
+/// The guest's vsock context id (host is always CID 2).
+const GUEST_CID: u32 = 3;
+/// How long to wait for the guest to drain to quiescence before snapshotting.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Per-process sequence so concurrent/looped migrations get distinct work dirs.
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -58,6 +64,10 @@ pub enum MigrateError {
     /// The source VM did not reach userspace before the boot deadline.
     #[error("source VM never reached userspace")]
     BootTimeout,
+    /// The guest did not reach quiescence before the drain deadline — by the race
+    /// rule the in-flight turn wins, so the migration stands down.
+    #[error("guest not quiescent before drain deadline (a turn was in flight)")]
+    NotQuiescent,
     /// A required artifact (Firecracker binary, kernel, rootfs) was not found.
     #[error("artifact not found: {0} — run `just fetch`")]
     MissingArtifact(&'static str),
@@ -115,8 +125,11 @@ pub fn discover_artifacts() -> Result<Artifacts, MigrateError> {
         .ok_or(MigrateError::MissingArtifact("firecracker binary"))?,
         kernel: find(&dir, |n| n.starts_with("vmlinux"))
             .ok_or(MigrateError::MissingArtifact("kernel"))?,
-        rootfs: find(&dir, |n| n.ends_with(".squashfs") || n.ends_with(".ext4"))
-            .ok_or(MigrateError::MissingArtifact("rootfs"))?,
+        // The migration boots the guestd rootfs (guestd as init) so the guest can
+        // be drained to quiescence over vsock before snapshotting.
+        rootfs: find(&dir, |n| n.starts_with("guestd-rootfs")).ok_or(
+            MigrateError::MissingArtifact("guestd rootfs (run `just guest-rootfs`)"),
+        )?,
     })
 }
 
@@ -151,15 +164,57 @@ pub async fn migrate_source(art: &Artifacts, addr: &str) -> Result<SourceTiming,
         drive_id: "rootfs".to_owned(),
         path_on_host: art.rootfs.clone(),
         is_root_device: true,
-        is_read_only: true,
+        is_read_only: false,
+    })
+    .await?;
+    // The vsock host-side UDS lives directly under the temp dir, not the per-VM
+    // work dir: Firecracker re-binds this exact path when the snapshot is loaded
+    // on the target, so its parent must exist there too (every host has /tmp; a
+    // source-only work dir would not). Unique per migration to avoid stale-socket
+    // clashes on a host that migrates repeatedly.
+    let vsock_uds = std::env::temp_dir().join(format!(
+        "sleepwalk-vsock-{}-{}.sock",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    fc.configure_vsock(VsockConfig {
+        guest_cid: GUEST_CID,
+        uds_path: vsock_uds.clone(),
     })
     .await?;
     fc.boot().await?;
-    if !wait_for_serial(&work.join("fc.log"), "login", secs(20)).await {
+
+    // Reach the live guest over vsock, hand it secrets, and drain it to a
+    // verified idle gap *before* snapshotting — the safety gate. On any failure
+    // here the VM is left intact on the source (nothing has been snapshotted).
+    let abort = |proc: &mut FcProcess, work: &Path| {
         let _ = proc.kill();
-        let _ = std::fs::remove_dir_all(&work);
-        return Err(MigrateError::BootTimeout);
+        let _ = std::fs::remove_dir_all(work);
+        let _ = std::fs::remove_file(&vsock_uds);
+    };
+    let link = match GuestLink::connect_retry(&vsock_uds, proto::GUEST_VSOCK_PORT, secs(20)).await {
+        Ok(link) => link,
+        Err(e) => {
+            abort(&mut proc, &work);
+            return Err(io("connect guest vsock", e));
+        }
+    };
+    if let Err(e) = link.handshake(std::collections::BTreeMap::new()).await {
+        abort(&mut proc, &work);
+        return Err(io("guest handshake", e));
     }
+    match link.drain(DRAIN_DEADLINE).await {
+        Ok(DrainState::Quiescent) => {}
+        Ok(DrainState::Busy) => {
+            abort(&mut proc, &work);
+            return Err(MigrateError::NotQuiescent);
+        }
+        Err(e) => {
+            abort(&mut proc, &work);
+            return Err(io("drain guest", e));
+        }
+    }
+    drop(link); // close the control link before pausing
 
     let mem = work.join("mem.snap");
     let state = work.join("state.snap");
@@ -191,6 +246,7 @@ pub async fn migrate_source(art: &Artifacts, addr: &str) -> Result<SourceTiming,
     let bytes = std::fs::metadata(&mem).map(|m| m.len()).unwrap_or(0);
     let _ = proc.kill();
     let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_file(&vsock_uds);
 
     let timing = SourceTiming {
         snapshot: t1 - t0,
@@ -296,17 +352,4 @@ fn find(dir: &Path, pick: impl Fn(&str) -> bool + Copy) -> Option<PathBuf> {
         }
     }
     subdirs.into_iter().find_map(|d| find(&d, pick))
-}
-
-async fn wait_for_serial(log: &Path, needle: &str, timeout: Duration) -> bool {
-    let deadline = tokio::time::Instant::now() + timeout;
-    while tokio::time::Instant::now() < deadline {
-        if let Ok(text) = std::fs::read_to_string(log)
-            && text.contains(needle)
-        {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    false
 }

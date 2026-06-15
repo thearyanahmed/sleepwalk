@@ -68,9 +68,7 @@ async fn boots_a_microvm_to_userspace() {
         n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
     });
     let kernel = require(&art, "kernel", |n| n.starts_with("vmlinux"));
-    let rootfs = require(&art, "rootfs", |n| {
-        n.ends_with(".squashfs") || n.ends_with(".ext4")
-    });
+    let rootfs = require(&art, "rootfs", |n| n.ends_with(".squashfs"));
 
     let tmp = std::env::temp_dir();
     let stamp = std::process::id();

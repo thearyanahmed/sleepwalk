@@ -27,6 +27,8 @@
 pub mod drain;
 pub mod firecracker;
 #[cfg(target_os = "linux")]
+pub mod guestlink;
+#[cfg(target_os = "linux")]
 pub mod migrate;
 pub mod process;
 pub mod pseudo_firecracker;
@@ -41,8 +43,10 @@ pub mod vm;
 pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
-    SnapshotSource, SnapshotTarget,
+    SnapshotSource, SnapshotTarget, VsockConfig,
 };
+#[cfg(target_os = "linux")]
+pub use guestlink::{DrainState, GuestLink};
 #[cfg(target_os = "linux")]
 pub use migrate::{
     Artifacts, MigrateError, SourceTiming, bind_receiver, discover_artifacts, migrate_source,

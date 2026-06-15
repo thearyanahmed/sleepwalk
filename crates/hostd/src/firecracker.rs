@@ -90,6 +90,17 @@ pub struct MachineConfig {
     pub mem_size_mib: u32,
 }
 
+/// A virtio-vsock device (`PUT /vsock`): the guest's context id and the host-side
+/// unix socket Firecracker multiplexes guest connections over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VsockConfig {
+    /// The guest's vsock context id (`guest_cid`).
+    pub guest_cid: u32,
+    /// Host-side unix socket Firecracker creates (`uds_path`). Host→guest dials
+    /// it with `CONNECT <port>\n`; guest→host lands on `<uds_path>_<port>`.
+    pub uds_path: PathBuf,
+}
+
 /// Where a snapshot's two files are written (`PUT /snapshot/create`). The VM
 /// must be paused first.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +160,11 @@ pub trait FirecrackerApi {
     fn configure_drive(
         &self,
         drive: Drive,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Attach a vsock device before boot (`PUT /vsock`).
+    fn configure_vsock(
+        &self,
+        cfg: VsockConfig,
     ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
     /// Start the configured guest (boot the kernel).
     fn boot(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
@@ -318,6 +334,18 @@ impl FirecrackerApi for Firecracker {
             "configure_drive",
         )?;
         self.send(Method::PUT, &path, body, "configure_drive").await
+    }
+
+    async fn configure_vsock(&self, cfg: VsockConfig) -> Result<(), FirecrackerError> {
+        let body = json_body(
+            &serde_json::json!({
+                "guest_cid": cfg.guest_cid,
+                "uds_path": path_str(&cfg.uds_path),
+            }),
+            "configure_vsock",
+        )?;
+        self.send(Method::PUT, "/vsock", body, "configure_vsock")
+            .await
     }
 
     async fn boot(&self) -> Result<(), FirecrackerError> {

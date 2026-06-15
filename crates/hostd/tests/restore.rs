@@ -76,9 +76,7 @@ async fn snapshot_then_uffd_restore_keeps_the_vm_alive() {
         n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
     });
     let kernel = require(&art, "kernel", |n| n.starts_with("vmlinux"));
-    let rootfs = require(&art, "rootfs", |n| {
-        n.ends_with(".squashfs") || n.ends_with(".ext4")
-    });
+    let rootfs = require(&art, "rootfs", |n| n.ends_with(".squashfs"));
 
     let tmp = std::env::temp_dir().join(format!("sleepwalk-restore-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).expect("tmp dir");

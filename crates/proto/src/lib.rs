@@ -35,3 +35,7 @@ pub use vsock::{GuestToHost, HostToGuest};
 /// CHANGELOG entry. The boot [`Hello`][GuestToHost::Hello] carries the guest's
 /// own [`GuestdVersion`]; hostd checks compatibility against this.
 pub const PROTOCOL_VERSION: &str = "v1-draft";
+
+/// The vsock port the in-VM guestd listens on and hostd connects to. Part of the
+/// contract: a non-Rust guest must serve on this port.
+pub const GUEST_VSOCK_PORT: u32 = 5252;

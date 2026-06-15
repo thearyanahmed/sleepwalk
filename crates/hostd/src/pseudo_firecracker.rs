@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use crate::firecracker::{
     BootSource, Drive, FirecrackerApi, FirecrackerError, MachineConfig, SnapshotSource,
-    SnapshotTarget,
+    SnapshotTarget, VsockConfig,
 };
 
 /// A fake Firecracker that records calls and can inject failures.
@@ -93,6 +93,9 @@ impl FirecrackerApi for PseudoFirecracker {
     }
     async fn configure_drive(&self, _drive: Drive) -> Result<(), FirecrackerError> {
         self.record("configure_drive")
+    }
+    async fn configure_vsock(&self, _cfg: VsockConfig) -> Result<(), FirecrackerError> {
+        self.record("configure_vsock")
     }
     async fn boot(&self) -> Result<(), FirecrackerError> {
         self.record("boot")

@@ -76,9 +76,7 @@ async fn migrates_a_vm_with_memory_moved_over_tcp() {
         n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
     });
     let kernel = require(&art, "kernel", |n| n.starts_with("vmlinux"));
-    let rootfs = require(&art, "rootfs", |n| {
-        n.ends_with(".squashfs") || n.ends_with(".ext4")
-    });
+    let rootfs = require(&art, "rootfs", |n| n.ends_with(".squashfs"));
 
     let base = std::env::temp_dir().join(format!("sleepwalk-migrate-{}", std::process::id()));
     // `src` stands in for host A's state dir, `dst` for host B's — separate
