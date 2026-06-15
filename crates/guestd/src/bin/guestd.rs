@@ -74,15 +74,12 @@ mod linux {
                 continue;
             }
             println!("guestd: handshake complete; serving host messages");
-            loop {
-                match g.channel().recv().await {
-                    Ok(msg) => {
-                        if let Err(e) = g.handle(msg, now()).await {
-                            eprintln!("guestd: handle: {e}");
-                            break;
-                        }
-                    }
-                    Err(_) => break, // host disconnected; wait for a new session
+            // Serve host messages until the host disconnects (recv errors), then
+            // loop back to re-accept a session (e.g. the target host after a move).
+            while let Ok(msg) = g.channel().recv().await {
+                if let Err(e) = g.handle(msg, now()).await {
+                    eprintln!("guestd: handle: {e}");
+                    break;
                 }
             }
         }
