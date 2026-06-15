@@ -35,6 +35,8 @@ pub mod migrate;
 pub mod process;
 pub mod pseudo_firecracker;
 pub mod quiesce;
+#[cfg(target_os = "linux")]
+pub mod registry;
 pub mod statedir;
 pub mod telemetry;
 pub mod transfer;
@@ -61,6 +63,8 @@ pub use pseudo_firecracker::PseudoFirecracker;
 pub use quiesce::{
     AppLayer, InfraLayer, InfraThresholds, QuiescenceDetector, QuiescenceReport, StorageLayer,
 };
+#[cfg(target_os = "linux")]
+pub use registry::{HostStatus, RunningVm, VmRegistry};
 pub use statedir::VmDir;
 pub use transfer::{
     OutboundFile, TransferError, recv_files, recv_snapshot, send_files, send_snapshot,

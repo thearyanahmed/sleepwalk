@@ -5,18 +5,22 @@
 //!
 //!   GET  /healthz                  liveness ("ok")
 //!   GET  /metrics                  Prometheus exposition (scraped → Grafana)
+//!   GET  /status                   this host's load + VMs (the rebalancer reads it)
+//!   POST /vms/spawn?mib=MIB        boot a VM here and register it
 //!   POST /migrate/send?to=IP:PORT  boot+snapshot a VM here, stream it to a peer
 //!   POST /migrate/recv?listen=ADDR receive one migration, UFFD-restore + resume
 //!
 //! Migrations happen *through* the daemon: it runs continuously and is reaped
 //! only by its service manager, so there is no per-migration process spawning or
-//! `pkill`. The migrate endpoints need Linux + `/dev/kvm`; elsewhere they answer
-//! 501 so the daemon still builds and serves metrics on any platform.
+//! `pkill`. The VM and migrate endpoints need Linux + `/dev/kvm`; elsewhere they
+//! answer 501 so the daemon still builds and serves metrics on any platform.
 //!
-//! Usage: `hostd daemon <listen_addr>`   (e.g. `hostd daemon 0.0.0.0:8080`)
+//! Usage: `hostd daemon <listen_addr> [host_id] [capacity_mib]`
+//! (e.g. `hostd daemon 0.0.0.0:8080 a 768`)
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -26,6 +30,13 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::net::TcpListener;
+
+/// Shared daemon state handed to every request.
+struct AppState {
+    handle: PrometheusHandle,
+    #[cfg(target_os = "linux")]
+    registry: Arc<hostd::VmRegistry>,
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -38,6 +49,8 @@ fn main() {
                     std::process::exit(2);
                 }
             };
+            let host_id = args.get(3).cloned().unwrap_or_else(|| "host".to_owned());
+            let capacity_mib = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(768u32);
             let rt = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -48,30 +61,43 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = rt.block_on(daemon(addr)) {
+            if let Err(e) = rt.block_on(daemon(addr, host_id, capacity_mib)) {
                 eprintln!("hostd: {e}");
                 std::process::exit(1);
             }
         }
         _ => {
-            eprintln!("usage: hostd daemon <listen_addr>");
+            eprintln!("usage: hostd daemon <listen_addr> [host_id] [capacity_mib]");
             std::process::exit(2);
         }
     }
 }
 
-async fn daemon(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn daemon(
+    addr: SocketAddr,
+    host_id: String,
+    capacity_mib: u32,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Install the Prometheus recorder; serve its rendering from /metrics.
     let handle = hostd::telemetry::recorder()?;
+    let state = Arc::new(AppState {
+        handle,
+        #[cfg(target_os = "linux")]
+        registry: Arc::new(hostd::VmRegistry::new(
+            proto::HostId::new(&host_id),
+            capacity_mib,
+        )),
+    });
+    let _ = (&host_id, capacity_mib); // used on Linux; referenced here to avoid warnings
     let listener = TcpListener::bind(addr).await?;
-    println!("hostd daemon listening on http://{addr} (/healthz, /metrics)");
+    println!("hostd daemon '{host_id}' listening on http://{addr} (/healthz, /metrics, /status)");
 
     loop {
         let (stream, _peer) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let handle = handle.clone();
+        let state = Arc::clone(&state);
         tokio::spawn(async move {
-            let service = service_fn(move |req| route(req, handle.clone()));
+            let service = service_fn(move |req| route(req, Arc::clone(&state)));
             if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("hostd: connection error: {e}");
             }
@@ -81,16 +107,58 @@ async fn daemon(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error + Send
 
 async fn route(
     req: Request<hyper::body::Incoming>,
-    handle: PrometheusHandle,
+    state: Arc<AppState>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let resp = match (req.method(), req.uri().path()) {
         (&Method::GET, "/healthz") => text(StatusCode::OK, "ok\n"),
-        (&Method::GET, "/metrics") => text(StatusCode::OK, &handle.render()),
+        (&Method::GET, "/metrics") => text(StatusCode::OK, &state.handle.render()),
+        (&Method::GET, "/status") => status(&state).await,
+        (&Method::POST, "/vms/spawn") => vms_spawn(&req, &state).await,
         (&Method::POST, "/migrate/send") => migrate_send(&req).await,
         (&Method::POST, "/migrate/recv") => migrate_recv(&req).await,
         _ => text(StatusCode::NOT_FOUND, "not found\n"),
     };
     Ok(resp)
+}
+
+#[cfg(target_os = "linux")]
+async fn status(state: &AppState) -> Response<Full<Bytes>> {
+    let st = state.registry.status().await;
+    match serde_json::to_string(&st) {
+        Ok(json) => text(StatusCode::OK, &format!("{json}\n")),
+        Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn vms_spawn(
+    req: &Request<hyper::body::Incoming>,
+    state: &AppState,
+) -> Response<Full<Bytes>> {
+    let mib: u32 = query_param(req.uri().query(), "mib")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(128);
+    let art = match hostd::discover_artifacts() {
+        Ok(a) => a,
+        Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    };
+    match state.registry.spawn(&art, mib).await {
+        Ok(id) => text(StatusCode::OK, &format!("{{\"vm\":\"{id}\"}}\n")),
+        Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn status(_state: &AppState) -> Response<Full<Bytes>> {
+    text(StatusCode::NOT_IMPLEMENTED, "registry requires Linux\n")
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn vms_spawn(
+    _req: &Request<hyper::body::Incoming>,
+    _state: &AppState,
+) -> Response<Full<Bytes>> {
+    text(StatusCode::NOT_IMPLEMENTED, "registry requires Linux\n")
 }
 
 /// Extract a query parameter `key` from a `k=v&k2=v2` query string.
