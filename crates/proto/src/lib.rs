@@ -18,11 +18,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod compat;
 pub mod fsm;
 pub mod ids;
 pub mod vsock;
 mod wire;
 
+pub use compat::CompatClass;
 pub use fsm::{Migration, MigrationState};
 pub use ids::{GuestdVersion, HostId, Timestamp, TurnId, VmId};
 pub use vsock::{GuestToHost, HostToGuest};
