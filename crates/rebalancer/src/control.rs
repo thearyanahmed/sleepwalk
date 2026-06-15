@@ -87,10 +87,11 @@ pub trait DaemonApi {
         listen: &str,
     ) -> impl Future<Output = Result<(), String>> + Send;
 
-    /// Tell the daemon at `control_url` to send its VM to `to`.
+    /// Tell the daemon at `control_url` to send its registered VM `vm` to `to`.
     fn migrate_send(
         &self,
         control_url: &str,
+        vm: &str,
         to: &str,
     ) -> impl Future<Output = Result<(), String>> + Send;
 }
@@ -124,7 +125,7 @@ pub async fn rebalance_once(
             op: "recv",
             detail,
         })?;
-    api.migrate_send(&source.control_url, &target.data_addr)
+    api.migrate_send(&source.control_url, &mv.vm.to_string(), &target.data_addr)
         .await
         .map_err(|detail| CtlError::Daemon {
             host: mv.from.clone(),
@@ -180,8 +181,8 @@ impl DaemonApi for PseudoDaemon {
     async fn migrate_recv(&self, control_url: &str, listen: &str) -> Result<(), String> {
         self.record("recv", control_url, listen)
     }
-    async fn migrate_send(&self, control_url: &str, to: &str) -> Result<(), String> {
-        self.record("send", control_url, to)
+    async fn migrate_send(&self, control_url: &str, vm: &str, to: &str) -> Result<(), String> {
+        self.record("send", control_url, &format!("{vm} {to}"))
     }
 }
 
@@ -248,8 +249,8 @@ mod tests {
         assert_eq!(
             api.calls(),
             [
-                "recv http://b:8080 0.0.0.0:9000",
-                "send http://a:8080 b:9000"
+                "recv http://b:8080 0.0.0.0:9000".to_owned(),
+                format!("send http://a:8080 {vm} b:9000"),
             ]
         );
     }
