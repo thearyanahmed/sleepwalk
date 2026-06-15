@@ -78,6 +78,10 @@ remote-run TARGET:
 hostd-daemon ADDR="0.0.0.0:8080":
     cargo run -q -p hostd --bin hostd -- daemon {{ADDR}}
 
+# Build the synthetic guest rootfs (static guestd as init). Linux build host.
+guest-rootfs:
+    scripts/build-guest-rootfs.sh
+
 # UFFD lazy-restore page server. Needs Linux (userfaultfd) but NOT KVM, so it
 # runs on any Linux box: `just remote-run uffd-test`.
 uffd-test:
