@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "examples/*"]
 
 # Internal workspace crates are NOT prefixed with the project name (proto, cli,
 # …); only the `sleepwalk` binary crate (crates/cli) is published.

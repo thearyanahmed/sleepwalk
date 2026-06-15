@@ -1,0 +1,21 @@
+# ramstate — a tiny in-RAM stateful HTTP workload used to prove that a VM's
+# memory survives a migration. Its counter/log live only in process memory; after
+# the VM moves host A → host B the same process keeps serving and the counter
+# continues, never resets. std-only so it builds static against musl for the
+# guest rootfs. Example crate, never published.
+[package]
+name = "ramstate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "in-RAM stateful demo workload for migration continuity (example)."
+publish = false
+
+[[bin]]
+name = "ramstate"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
