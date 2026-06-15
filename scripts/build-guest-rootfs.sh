@@ -30,12 +30,25 @@ if command -v file >/dev/null 2>&1 && file "$BIN" | grep -q "dynamically linked"
     _die "guestd is dynamically linked; musl static build expected"
 fi
 
+_log "building static ramstate workload for $TARGET"
+( cd "$SLEEPWALK_ROOT" && cargo build -q -p ramstate --bin ramstate --release --target "$TARGET" )
+APP="$SLEEPWALK_ROOT/target/$TARGET/release/ramstate"
+[[ -x "$APP" ]] || _die "ramstate binary not produced at $APP"
+if command -v file >/dev/null 2>&1 && file "$APP" | grep -q "dynamically linked"; then
+    _die "ramstate is dynamically linked; musl static build expected"
+fi
+
 _log "assembling rootfs tree"
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
-mkdir -p "$ROOT/dev" "$ROOT/proc" "$ROOT/sys"
+mkdir -p "$ROOT/dev" "$ROOT/proc" "$ROOT/sys" "$ROOT/etc/sleepwalk"
 cp "$BIN" "$ROOT/init" # the kernel execs /init as PID 1 (boot arg init=/init)
 chmod +x "$ROOT/init"
+cp "$APP" "$ROOT/app" # the in-RAM stateful workload guestd supervises (wrap mode)
+chmod +x "$ROOT/app"
+# guestd (init) reads this and runs /app as its wrapped child; the rootfs has no
+# shell, so this file — not an env export — is how wrap mode is selected.
+printf '/app\n' > "$ROOT/etc/sleepwalk/wrap-cmd"
 
 IMG="$OUT/guestd-rootfs-${ARCH}.ext4"
 rm -f "$IMG"
