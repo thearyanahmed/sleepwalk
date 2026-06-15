@@ -90,3 +90,122 @@ pub async fn drive<E: MigrationExecutor>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use proto::{HostId, VmId};
+
+    use super::*;
+    use crate::executor::DrainOutcome;
+    use crate::pseudo_executor::PseudoExecutor;
+
+    fn intent() -> Migration<state::Intent> {
+        Migration::intent(VmId::new(), HostId::new("a"), HostId::new("b"))
+    }
+
+    fn deadline() -> Duration {
+        Duration::from_secs(5)
+    }
+
+    /// The happy path runs every effect once, in the snapshot-after-drain order.
+    #[tokio::test]
+    async fn quiescent_drain_completes_in_order() {
+        let exec = PseudoExecutor::new(); // drain → Quiescent
+        let outcome = drive(intent(), &exec, deadline()).await.expect("drive");
+        assert_eq!(outcome, MigrationOutcome::Completed);
+        assert_eq!(
+            exec.calls(),
+            [
+                "request_drain",
+                "snapshot",
+                "transfer",
+                "restore",
+                "cutover",
+                "cleanup"
+            ]
+        );
+    }
+
+    /// The race rule: a busy guest stands the migration down — it cancels the
+    /// drain and NEVER snapshots (the in-flight turn is never cut).
+    #[tokio::test]
+    async fn busy_drain_aborts_without_snapshotting() {
+        let exec = PseudoExecutor::with_drain(DrainOutcome::Busy { in_flight: None });
+        let outcome = drive(intent(), &exec, deadline()).await.expect("drive");
+        assert_eq!(
+            outcome,
+            MigrationOutcome::Aborted(AbortReason::NotQuiescent)
+        );
+        assert_eq!(exec.calls(), ["request_drain", "cancel_drain"]);
+        assert!(
+            !exec.calls().contains(&"snapshot"),
+            "must not snapshot a busy guest"
+        );
+    }
+
+    /// A drain-request failure surfaces and nothing past it runs.
+    #[tokio::test]
+    async fn drain_request_failure_propagates() {
+        let exec = PseudoExecutor::new();
+        exec.fail_on("request_drain", "vsock down");
+        let err = drive(intent(), &exec, deadline())
+            .await
+            .expect_err("must fail");
+        let MigrationError::Executor(e) = err;
+        assert_eq!(e.op, "request_drain");
+        assert_eq!(exec.calls(), ["request_drain"]);
+    }
+
+    /// A failure at or after `snapshot` is past the point of no return: it
+    /// propagates as an error and the driver does NOT roll back (no cancel/abort).
+    #[tokio::test]
+    async fn snapshot_failure_does_not_roll_back() {
+        let exec = PseudoExecutor::new();
+        exec.fail_on("snapshot", "disk full");
+        let err = drive(intent(), &exec, deadline())
+            .await
+            .expect_err("must fail");
+        let MigrationError::Executor(e) = err;
+        assert_eq!(e.op, "snapshot");
+        // Snapshot was attempted; nothing rolled back, nothing past it ran.
+        assert_eq!(exec.calls(), ["request_drain", "snapshot"]);
+        assert!(!exec.calls().contains(&"cancel_drain"));
+    }
+
+    /// A post-snapshot transfer failure also just propagates — the VM is already
+    /// committed to the move; there is no silent rollback path.
+    #[tokio::test]
+    async fn transfer_failure_after_snapshot_propagates() {
+        let exec = PseudoExecutor::new();
+        exec.fail_on("transfer", "connection reset");
+        let err = drive(intent(), &exec, deadline())
+            .await
+            .expect_err("must fail");
+        let MigrationError::Executor(e) = err;
+        assert_eq!(e.op, "transfer");
+        assert_eq!(exec.calls(), ["request_drain", "snapshot", "transfer"]);
+    }
+
+    /// A cleanup failure (the very last effect) still surfaces.
+    #[tokio::test]
+    async fn cleanup_failure_propagates() {
+        let exec = PseudoExecutor::new();
+        exec.fail_on("cleanup", "stale dir");
+        let err = drive(intent(), &exec, deadline())
+            .await
+            .expect_err("must fail");
+        let MigrationError::Executor(e) = err;
+        assert_eq!(e.op, "cleanup");
+        assert_eq!(
+            exec.calls(),
+            [
+                "request_drain",
+                "snapshot",
+                "transfer",
+                "restore",
+                "cutover",
+                "cleanup"
+            ]
+        );
+    }
+}
