@@ -15,6 +15,19 @@ publish = false
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
+# Used by the `rebalance` binary (the control loop); the library itself stays
+# transport-agnostic behind the DaemonApi port.
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util"] }
+hyper = { workspace = true, features = ["http1", "client"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+http-body-util.workspace = true
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[[bin]]
+name = "rebalance"
+path = "src/bin/rebalance.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }

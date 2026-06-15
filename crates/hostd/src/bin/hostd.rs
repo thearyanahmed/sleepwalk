@@ -140,13 +140,17 @@ async fn migrate_recv(req: &Request<hyper::body::Incoming>) -> Response<Full<Byt
         Ok(l) => l,
         Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
     };
-    match hostd::restore_target(&art.fc_bin, &listener).await {
-        Ok(()) => text(StatusCode::OK, "restored\n"),
-        Err(e) => {
+    // Return once we are listening; the restore runs in the background so the
+    // caller (the rebalancer) can fire the source send next. Outcome is recorded
+    // to telemetry.
+    let fc_bin = art.fc_bin.clone();
+    tokio::spawn(async move {
+        if let Err(e) = hostd::restore_target(&fc_bin, &listener).await {
             hostd::telemetry::migration_failed();
-            text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n"))
+            eprintln!("hostd: restore failed: {e}");
         }
-    }
+    });
+    text(StatusCode::ACCEPTED, "receiving\n")
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -1023,7 +1023,13 @@ dependencies = [
 name = "rebalancer"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "proto",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]
