@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Format, lint, and run the everywhere (mock) test suite on Linux. The kvm /
+  # vsock-test features gate code that needs /dev/kvm or a vsock module to *run*,
+  # but it still *compiles* on a plain runner — so we clippy it here to catch
+  # feature-gated breakage without a VM.
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy (default)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy (hostd kvm — compile the VM-facing code)
+        run: cargo clippy -p hostd --features kvm --all-targets -- -D warnings
+      - name: clippy (guestd vsock-test — compile the vsock loopback code)
+        run: cargo clippy -p guestd --features vsock-test --all-targets -- -D warnings
+      - name: test (mock suite)
+        run: cargo test --workspace
+
+  # The workspace also builds and tests on macOS (the dev platform): the Linux-only
+  # modules are cfg'd out, so this guards the cross-platform seams.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: build
+        run: cargo build --workspace
+      - name: test
+        run: cargo test --workspace
