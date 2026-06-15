@@ -180,6 +180,26 @@
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sleepwalk_freeze_window_seconds{quantile=\"0.5\"}", "legendFormat": "p50 {{instance}}" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sleepwalk_freeze_window_seconds{quantile=\"0.99\"}", "legendFormat": "p99 {{instance}}" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Compatibility classes — who can migrate to whom",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }
+    },
+    {
+      "type": "table",
+      "title": "Host CPU/TSC compatibility class",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 41 },
+      "description": "Each host's compatibility class (CPU vendor/model/TSC/kernel). A VM can only migrate between hosts that share a class — that's why the cross-host move failed when the two droplets landed on different TSC frequencies. Hosts with the same class value are valid migration partners.",
+      "fieldConfig": { "defaults": { "custom": { "align": "auto", "filterable": true } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sleepwalk_host_info", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "job": true, "instance": true, "__name__": true, "Value": true }, "renameByName": { "host": "host", "class": "compatibility class" } } }
+      ]
     }
   ]
 }
