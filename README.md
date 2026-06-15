@@ -128,6 +128,34 @@ a lower bound on total perceived downtime. Transfer dominates and scales with
 guest RAM — diff snapshots and a faster path are the levers. 1-vCPU droplets, so
 not representative numbers.
 
+## Benchmark (cross-node, compatibility-class-matched, 20 runs)
+
+A 256 MB guest migrated A→B between two **CPU-homogeneous** droplets (matching
+TSC, same [compatibility class](docs/adr/0004-cpu-tsc-compatibility-classes.md)),
+20 consecutive runs, **20/20 succeeded**. Source cost = pause → snapshot →
+transfer-complete.
+
+| metric (source cost) | min | max | mean | median |
+|----------------------|----:|----:|-----:|-------:|
+| snapshot (ms)        | 306 |  443 |  372 |    372 |
+| transfer 256 MB (ms) | 963 | 1130 | 1011 |    969 |
+| total (ms)           |1272 | 1513 | 1383 |   1349 |
+
+Conditions: two DigitalOcean droplets, **2 vCPU** each, Firecracker v1.16.0,
+kernel 6.8, 256 MB guest, snapshot on disk-backed `/tmp`, streamed over the
+**public internet**, 20 runs. Source-side only (excludes target restore/resume).
+
+**End-to-end continuity (the headline).** A stateful in-RAM HTTP app (the
+[`ramstate`](examples/ramstate) example — a counter living only in process
+memory) was hit in a tight loop from a laptop, through a host port (DNAT), *while*
+the VM migrated. The counter **continued across the move with the same process
+boot id — zero state loss** — with a single **~4.7 s** client-visible blip. That
+blip is the *whole* picture (snapshot + 256 MB transfer + UFFD restore + VXLAN
+FDB relearn + ~2 s client-timeout granularity), not the source cost above. The
+freeze is dominated by shipping the entire 256 MB of guest RAM regardless of how
+little the app uses; diff snapshots, smaller guest RAM, GARP-on-resume, and a
+private link are the levers (see Limitations / Roadmap).
+
 ## Limitations
 
 - **Linux + KVM, x86_64** for the VM-facing paths. The host-agnostic logic builds
@@ -148,6 +176,99 @@ not representative numbers.
   connections are in flight — by design.
 - **Pre-1.0.** CLI, config, and the guest protocol may change with a CHANGELOG
   entry and a version bump.
+
+## What we achieved
+
+- A **running Firecracker microVM relocated across two physical hosts** —
+  snapshot → network transfer → userfaultfd lazy restore — gated on *verified*
+  quiescence. No Firecracker fork, no kernel patches, Apache-2.0.
+- **Zero state loss across the move.** An in-RAM workload's state (a counter +
+  heap) survives, the *same* process resumes on the target, and a live client
+  connection follows the VM to the new host (the overlay keeps its IP).
+- **Quiescence is verified, not assumed** (app + infra + storage layers), and a
+  normative **race rule** guarantees an in-flight turn is never cut by a migration.
+- **CPU/TSC compatibility classes** as a first-class placement constraint — the
+  rebalancer refuses a cross-class move *up front* instead of failing at restore.
+- A **live fleet view** (Prometheus + Grafana): servers by IP, machine
+  resources, VM placement (host/IP flips on migration), and request rate holding
+  through the freeze.
+- **20/20** cross-node migrations; **~1.4 s mean source cost** for a 256 MB guest
+  over the public internet.
+
+## Pros & cons
+
+**Pros**
+- No Firecracker fork, no kernel patches, permissive licence (Apache-2.0).
+- Externalized-state workloads (agents, jobs) relocate with **zero data loss**.
+- Restore-side freeze is independent of total guest RAM — UFFD faults in only the
+  pages the guest touches.
+- Quiescence-gated: no in-flight work is ever interrupted.
+- Compatibility-class-aware placement: migrations that would fail are never tried.
+
+**Cons / trade-offs**
+- **Not true live migration** — there is a real pause (the snapshot is
+  stop-the-world). Freeze is ~1.4 s source cost / a few seconds perceived for a
+  256 MB guest over public internet — **not** sub-100 ms (yet).
+- The pause + transfer scale with **guest RAM, not workload size**: a tiny app in
+  a 256 MB VM still ships 256 MB. Diff snapshots are the fix.
+- Snapshots are **CPU-compatibility-bound** (same vendor/model, TSC within ~250
+  ppm); a heterogeneous cloud fleet fragments into classes.
+- No live TCP migration; relocation only at quiescence.
+- Pre-1.0; Linux/KVM + x86_64 only (see Limitations).
+
+## Where sleepwalk sits vs. live migration
+
+sleepwalk does **snapshot/restore at quiescence**, not true live migration. For
+context (all sourced from upstream docs/repos):
+
+- **Upstream Firecracker has no live migration** — only paused snapshot/restore;
+  the microVM must be stopped to snapshot.
+- **Loophole Labs Drafter/Silo** *did* do live migration (hybrid pre/post-copy)
+  on Firecracker — but it required a **Firecracker fork + kernel (PVM) patches**,
+  was **AGPL-3.0**, and is now **archived** (2025). Self-reported downtime
+  <100 ms same-datacentre, ~500 ms intercontinental.
+- **Cloud Hypervisor** (a sibling Rust VMM) has mature upstream **pre-copy** live
+  migration via dirty-page tracking — but it isn't Firecracker.
+- **Post-copy via userfaultfd is achievable on *stock*, Apache-2.0 Firecracker.**
+  Firecracker hands the UFFD page-fault handler a raw file descriptor + the guest
+  memory layout, then steps out of the way — so the handler is free to source
+  pages **over the network** from the source host on demand. That turns
+  sleepwalk's "restore from a local file" into "resume immediately, fault each
+  page from the source as the guest touches it" — dropping the freeze toward the
+  CPU/device-state switchover cost, independent of RAM size. **This is the natural
+  next step and needs no fork.** True **pre-copy** (streaming dirty pages from a
+  *running* VM) is **not** reachable without forking — the public API can't read
+  dirty pages from a running microVM (that's the line Drafter crossed).
+- Trade-off of post-copy: once the target faults pages in, no single host holds a
+  complete image, so a mid-fault network partition loses the VM — the source must
+  keep its snapshot until cutover for a safe fallback.
+
+This is the gap sleepwalk occupies: the **permissive, no-fork, quiescence-gated**
+point on the spectrum, with a clear post-copy path to lower downtime.
+
+## Terminology
+
+- **VM** — virtual machine. **microVM** — a minimal, fast-booting VM (Firecracker's unit).
+- **VMM** — virtual machine monitor (the user-space hypervisor process; Firecracker is one).
+- **KVM** — Kernel-based Virtual Machine, the Linux hardware-virtualization layer Firecracker runs on.
+- **Firecracker / FC** — AWS's minimal VMM for microVMs.
+- **snapshot / restore** — serialize a *paused* VM's memory + device state to files, recreate it later.
+- **UFFD (userfaultfd)** — a Linux syscall that delivers page-fault events to a user-space handler; used here to restore guest memory **lazily** (pages load on first touch).
+- **lazy restore** — resume the VM immediately and fault memory pages in on demand, instead of loading all RAM up front.
+- **quiescence** — a verified idle state (no in-flight work) where it is safe to snapshot. **drain** — gate new work and wait for in-flight work to finish, reaching quiescence.
+- **TSC** — Time Stamp Counter, a per-CPU cycle counter the guest uses as its clock; its frequency must match (or be hardware-scalable) across hosts for a snapshot to restore.
+- **TSC scaling** — a CPU feature that presents a different TSC rate to the guest; needed to restore across mismatched TSC frequencies.
+- **compatibility class** — the set of hosts a snapshot can move between (same CPU vendor/model, TSC within ~250 ppm, same kernel tier).
+- **ppm** — parts per million (the TSC-match tolerance is 250 ppm).
+- **vsock (AF_VSOCK)** — a socket family for host↔guest communication; the guest protocol runs over it. **CID** — Context ID, a vsock address identifying a VM.
+- **tap** — a virtual L2 network interface on the host backing the guest's NIC. **bridge** — a virtual L2 switch (`br-sw`) the taps attach to.
+- **VXLAN** — an L2-over-UDP overlay that spans the bridge across hosts, so a VM keeps its MAC/IP after moving.
+- **FDB** — forwarding database (a bridge/VXLAN MAC→port table); it must relearn the VM's location after a move. **GARP** — gratuitous ARP, an unsolicited announcement that speeds that relearn.
+- **NAT** — network address translation. **MASQUERADE** — the iptables NAT form that rewrites source addresses (egress / hairpin). **DNAT** — destination NAT, used to forward a host port to the guest so a client can reach it.
+- **RPS** — requests per second. **p50 / p99** — median / 99th-percentile latency.
+- **pre-copy / post-copy** — live-migration strategies: copy memory *before* vs. *after* switching the guest to the target host.
+- **ADR** — Architecture Decision Record (see [`docs/adr/`](docs/adr/)).
+- **rebalancer** — the control plane that picks and drives migrations. **hostd** — the per-host daemon. **guestd** — the in-VM supervisor (PID 1).
 
 ## License
 
