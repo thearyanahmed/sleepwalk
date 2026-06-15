@@ -9,8 +9,14 @@
 # this sets up the shared fabric once per host.
 #
 # Usage (run as root):
-#   net-host.sh up [GATEWAY_CIDR|none]   bridge up; assign gateway (default
-#                                        10.200.0.1/24) or 'none' (peer host)
+#   net-host.sh up [GATEWAY_CIDR|none]   bridge up. A CIDR (default 10.200.0.1/24)
+#                                        makes this the guest-gateway host. 'none'
+#                                        is a peer/target host: it gets a distinct
+#                                        host-routing address (10.200.0.254/24) so
+#                                        it can still reach a VM it receives in a
+#                                        migration — only the gateway .1 is omitted
+#                                        (one .1 per L2). Each peer needs a unique
+#                                        address; this default suits a 2-host pair.
 #   net-host.sh vxlan <LOCAL_IP> <REMOTE_IP>   tunnel this host to a peer
 #   net-host.sh down
 #   net-host.sh status
@@ -26,7 +32,14 @@ up)
     gw="${2:-10.200.0.1/24}"
     ip link show "$BR" >/dev/null 2>&1 || ip link add "$BR" type bridge
     ip link set "$BR" up
-    if [ "$gw" != "none" ]; then
+    # A peer/target host must still have a routable address on the bridge — without
+    # one it has no route to the guest subnet, so a VM it receives in a migration is
+    # unreachable (inbound DNAT to the guest gets dropped). 'none' = no gateway .1,
+    # but assign a distinct host-routing IP so received VMs are reachable.
+    if [ "$gw" = "none" ]; then
+        host_ip=10.200.0.254/24
+        ip addr show dev "$BR" | grep -q "10.200.0.254/" || ip addr add "$host_ip" dev "$BR"
+    else
         ip addr show dev "$BR" | grep -q "${gw%/*}/" || ip addr add "$gw" dev "$BR"
     fi
     sysctl -wq net.ipv4.ip_forward=1
@@ -39,7 +52,7 @@ up)
         iptables -t nat -A POSTROUTING -s "$SUBNET" -o "$uplink" -j MASQUERADE
     iptables -C FORWARD -i "$BR" -j ACCEPT 2>/dev/null || iptables -A FORWARD -i "$BR" -j ACCEPT
     iptables -C FORWARD -o "$BR" -j ACCEPT 2>/dev/null || iptables -A FORWARD -o "$BR" -j ACCEPT
-    echo "net up: bridge $BR gateway $gw subnet $SUBNET uplink $uplink"
+    echo "net up: bridge $BR addr ${host_ip:-$gw} subnet $SUBNET uplink $uplink"
     ;;
 vxlan)
     local_ip="${2:?usage: net-host.sh vxlan <LOCAL_IP> <REMOTE_IP>}"
