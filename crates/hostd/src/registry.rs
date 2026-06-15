@@ -91,7 +91,7 @@ pub struct HostStatus {
     pub host: String,
     /// The VMs running here.
     pub vms: Vec<String>,
-    /// Memory pressure in `[0, 1]`: resident VM memory over capacity.
+    /// Live host memory pressure in `[0, 1]`, sampled from `/proc/meminfo`.
     pub pressure: f64,
 }
 
@@ -100,18 +100,15 @@ pub struct HostStatus {
 pub struct VmRegistry {
     vms: Mutex<BTreeMap<VmId, RunningVm>>,
     host: HostId,
-    /// The host's usable guest memory, in MiB — the denominator of pressure.
-    capacity_mib: u32,
 }
 
 impl VmRegistry {
-    /// A registry for `host` with `capacity_mib` of usable guest memory.
+    /// A registry for `host`.
     #[must_use]
-    pub fn new(host: HostId, capacity_mib: u32) -> Self {
+    pub fn new(host: HostId) -> Self {
         Self {
             vms: Mutex::new(BTreeMap::new()),
             host,
-            capacity_mib: capacity_mib.max(1),
         }
     }
 
@@ -195,14 +192,14 @@ impl VmRegistry {
         found
     }
 
-    /// This host's current load, for the rebalancer.
+    /// This host's current load, for the rebalancer — the live VM set plus the
+    /// host's real memory pressure from `/proc/meminfo`.
     pub async fn status(&self) -> HostStatus {
         let vms = self.vms.lock().await;
-        let used: u64 = vms.values().map(|v| u64::from(v.mib)).sum();
         HostStatus {
             host: self.host.to_string(),
             vms: vms.keys().map(ToString::to_string).collect(),
-            pressure: used as f64 / f64::from(self.capacity_mib),
+            pressure: crate::sysmem::memory_pressure(),
         }
     }
 }

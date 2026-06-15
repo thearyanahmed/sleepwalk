@@ -38,6 +38,7 @@ pub mod quiesce;
 #[cfg(target_os = "linux")]
 pub mod registry;
 pub mod statedir;
+pub mod sysmem;
 pub mod telemetry;
 pub mod transfer;
 #[cfg(target_os = "linux")]

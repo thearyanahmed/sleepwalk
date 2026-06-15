@@ -50,7 +50,6 @@ fn main() {
                 }
             };
             let host_id = args.get(3).cloned().unwrap_or_else(|| "host".to_owned());
-            let capacity_mib = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(768u32);
             let rt = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
@@ -61,13 +60,13 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = rt.block_on(daemon(addr, host_id, capacity_mib)) {
+            if let Err(e) = rt.block_on(daemon(addr, host_id)) {
                 eprintln!("hostd: {e}");
                 std::process::exit(1);
             }
         }
         _ => {
-            eprintln!("usage: hostd daemon <listen_addr> [host_id] [capacity_mib]");
+            eprintln!("usage: hostd daemon <listen_addr> [host_id]");
             std::process::exit(2);
         }
     }
@@ -76,19 +75,15 @@ fn main() {
 async fn daemon(
     addr: SocketAddr,
     host_id: String,
-    capacity_mib: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Install the Prometheus recorder; serve its rendering from /metrics.
     let handle = hostd::telemetry::recorder()?;
     let state = Arc::new(AppState {
         handle,
         #[cfg(target_os = "linux")]
-        registry: Arc::new(hostd::VmRegistry::new(
-            proto::HostId::new(&host_id),
-            capacity_mib,
-        )),
+        registry: Arc::new(hostd::VmRegistry::new(proto::HostId::new(&host_id))),
     });
-    let _ = (&host_id, capacity_mib); // used on Linux; referenced here to avoid warnings
+    let _ = &host_id; // used on Linux (registry); avoid unused warning elsewhere
     let listener = TcpListener::bind(addr).await?;
     println!("hostd daemon '{host_id}' listening on http://{addr} (/healthz, /metrics, /status)");
 
