@@ -140,9 +140,12 @@ pub async fn simulate(seed: u64) -> Result<RaceReport, GuestError> {
                 }
             }
             Kind::Drain => {
-                g.handle(HostToGuest::DrainRequest {
-                    deadline: Duration::from_millis(500),
-                })
+                g.handle(
+                    HostToGuest::DrainRequest {
+                        deadline: Duration::from_millis(500),
+                    },
+                    now,
+                )
                 .await?;
                 drained = true;
             }

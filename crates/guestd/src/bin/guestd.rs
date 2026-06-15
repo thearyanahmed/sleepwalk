@@ -22,10 +22,22 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use guestd::GuestChannel;
     use guestd::guest::Guest;
     use guestd::vsock::{DEFAULT_PORT, serve};
-    use proto::{GuestdVersion, VmId};
+    use proto::{GuestdVersion, Timestamp, VmId};
+
+    /// The guest's wall clock as a protocol timestamp. A pre-epoch clock (unset
+    /// RTC) clamps to 0; the host applies clock fix-up on resume regardless.
+    fn now() -> Timestamp {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        Timestamp::from_nanos(nanos)
+    }
 
     pub fn main() {
         let rt = match tokio::runtime::Builder::new_current_thread()
@@ -65,7 +77,7 @@ mod linux {
             loop {
                 match g.channel().recv().await {
                     Ok(msg) => {
-                        if let Err(e) = g.handle(msg).await {
+                        if let Err(e) = g.handle(msg, now()).await {
                             eprintln!("guestd: handle: {e}");
                             break;
                         }

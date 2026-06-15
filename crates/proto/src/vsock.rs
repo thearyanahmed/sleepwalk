@@ -97,6 +97,17 @@ pub enum HostToGuest {
     /// times out or the rebalancer cancels before snapshotting.
     DrainCancel,
 
+    /// Drive one unit of guest work. The guest runs the turn and reports it with
+    /// the matching [`TurnStarted`](GuestToHost::TurnStarted) /
+    /// [`TurnEnded`](GuestToHost::TurnEnded) carrying this same `turn_id`, so an
+    /// open-loop load generator on the host can time each turn and correlate the
+    /// completion to its request. Subject to the drain gate exactly like a
+    /// self-driven turn: one that arrives after the gate closes is deferred.
+    RunTurn {
+        /// The host-assigned id this turn must echo back.
+        turn_id: TurnId,
+    },
+
     /// Liveness probe.
     Ping,
     /// Liveness reply to a [`GuestToHost::Ping`].
@@ -151,6 +162,9 @@ mod tests {
                 deadline: Duration::from_millis(5_000),
             },
             HostToGuest::DrainCancel,
+            HostToGuest::RunTurn {
+                turn_id: TurnId::from_u64(7),
+            },
             HostToGuest::Ping,
             HostToGuest::Pong,
         ];
@@ -159,6 +173,14 @@ mod tests {
             let back: HostToGuest = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(msg, back, "round-trip mismatch for {json}");
         }
+        // RunTurn is a flat object carrying the host-assigned id.
+        assert_eq!(
+            serde_json::to_string(&HostToGuest::RunTurn {
+                turn_id: TurnId::from_u64(7)
+            })
+            .expect("serialize"),
+            r#"{"type":"RunTurn","turn_id":7}"#
+        );
     }
 
     /// Every message is a flat, internally-tagged object: a `type` field plus the

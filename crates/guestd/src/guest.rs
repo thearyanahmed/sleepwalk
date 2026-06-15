@@ -166,6 +166,36 @@ impl<C: GuestChannel> Guest<C> {
         Ok(StartOutcome::Started(self.begin_turn(now).await?))
     }
 
+    /// Run one host-commanded turn (a [`RunTurn`](proto::HostToGuest::RunTurn))
+    /// end to end under the host's `turn_id`: emit the busy then idle signal so
+    /// the host can time and correlate it. Deferred with [`StartOutcome::Queued`]
+    /// if the drain gate is closed — exactly like a self-driven turn, so a
+    /// migration started mid-load still honours the race rule. The unit of work
+    /// is the round trip itself; a wrapped real workload would do its work
+    /// between the two signals.
+    pub async fn run_turn(
+        &mut self,
+        turn_id: TurnId,
+        now: Timestamp,
+    ) -> Result<StartOutcome, GuestError> {
+        if let Some(in_flight) = self.in_flight {
+            return Err(GuestError::TurnInProgress { in_flight });
+        }
+        if self.gated {
+            self.queued += 1;
+            return Ok(StartOutcome::Queued);
+        }
+        self.in_flight = Some(turn_id);
+        self.chan
+            .send(GuestToHost::TurnStarted { turn_id, ts: now })
+            .await?;
+        self.chan
+            .send(GuestToHost::TurnEnded { turn_id, ts: now })
+            .await?;
+        self.in_flight = None;
+        Ok(StartOutcome::Started(turn_id))
+    }
+
     /// Replay one turn from the backlog that built up while the gate was closed.
     ///
     /// Returns the started turn's id, or `None` when the backlog is empty. The
@@ -219,9 +249,12 @@ impl<C: GuestChannel> Guest<C> {
         Ok(())
     }
 
-    /// React to one message from hostd.
-    pub async fn handle(&mut self, msg: HostToGuest) -> Result<(), GuestError> {
+    /// React to one message from hostd. `now` is the guest's clock, used by the
+    /// turn-driving messages ([`RunTurn`](HostToGuest::RunTurn)); the control
+    /// messages ignore it.
+    pub async fn handle(&mut self, msg: HostToGuest, now: Timestamp) -> Result<(), GuestError> {
         match msg {
+            HostToGuest::RunTurn { turn_id } => self.run_turn(turn_id, now).await.map(|_| ()),
             HostToGuest::DrainRequest { deadline: _ } => {
                 // Close the gate, then report what's still running. `None` means
                 // the app layer is quiescent; `Some` means hostd must wait for
@@ -325,6 +358,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn host_driven_turn_echoes_its_id_and_clears() {
+        let mut g = guest();
+        let id = TurnId::from_u64(42);
+        let outcome = g.run_turn(id, ts(1)).await.expect("run");
+        assert_eq!(outcome, StartOutcome::Started(id));
+        // Emits started+ended under the host's id; nothing left in flight.
+        assert!(g.in_flight().is_none());
+        assert!(matches!(
+            g.chan.sent().as_slice(),
+            [
+                GuestToHost::TurnStarted { turn_id: a, .. },
+                GuestToHost::TurnEnded { turn_id: b, .. },
+            ] if *a == id && *b == id
+        ));
+    }
+
+    #[tokio::test]
+    async fn host_driven_turn_is_deferred_while_gated() {
+        let mut g = guest();
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
+        .await
+        .expect("drain");
+        // A RunTurn arriving after the gate closes is queued, not run on the wire.
+        let outcome = g.run_turn(TurnId::from_u64(7), ts(1)).await.expect("gated");
+        assert_eq!(outcome, StartOutcome::Queued);
+        assert_eq!(g.queued_turns(), 1);
+        assert!(matches!(
+            g.chan.sent().as_slice(),
+            [GuestToHost::DrainAck { in_flight: None }]
+        ));
+    }
+
+    #[tokio::test]
     async fn starting_a_turn_while_one_runs_is_rejected() {
         let mut g = guest();
         g.start_turn(ts(1)).await.expect("start");
@@ -342,9 +413,12 @@ mod tests {
     #[tokio::test]
     async fn drain_while_idle_acks_none_and_gates_new_turns() {
         let mut g = guest();
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
 
@@ -373,9 +447,12 @@ mod tests {
         g.end_turn(ts(2)).await.expect("end");
 
         // Drain gates the gate; two turns arrive and are queued.
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
         assert_eq!(g.start_turn(ts(3)).await.expect("q"), StartOutcome::Queued);
@@ -411,15 +488,20 @@ mod tests {
     #[tokio::test]
     async fn drain_cancel_lets_the_backlog_replay_on_the_same_host() {
         let mut g = guest();
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
         assert_eq!(g.start_turn(ts(1)).await.expect("q"), StartOutcome::Queued);
 
         // Cancel reopens the gate without losing the queued turn.
-        g.handle(HostToGuest::DrainCancel).await.expect("cancel");
+        g.handle(HostToGuest::DrainCancel, ts(0))
+            .await
+            .expect("cancel");
         assert_eq!(g.queued_turns(), 1);
         let replayed = g.replay_next(ts(2)).await.expect("replay").expect("one");
         assert_eq!(replayed, TurnId::FIRST);
@@ -429,13 +511,18 @@ mod tests {
     #[tokio::test]
     async fn replay_is_refused_while_a_turn_is_in_flight() {
         let mut g = guest();
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
         g.start_turn(ts(1)).await.expect("q"); // queued
-        g.handle(HostToGuest::DrainCancel).await.expect("cancel");
+        g.handle(HostToGuest::DrainCancel, ts(0))
+            .await
+            .expect("cancel");
 
         // Start a fresh turn, then a replay must be refused until it ends.
         g.start_turn(ts(2)).await.expect("start");
@@ -451,9 +538,12 @@ mod tests {
         let StartOutcome::Started(turn) = g.start_turn(ts(1)).await.expect("start") else {
             panic!("should start");
         };
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
 
@@ -467,14 +557,19 @@ mod tests {
     #[tokio::test]
     async fn drain_cancel_reopens_the_gate() {
         let mut g = guest();
-        g.handle(HostToGuest::DrainRequest {
-            deadline: Duration::from_secs(5),
-        })
+        g.handle(
+            HostToGuest::DrainRequest {
+                deadline: Duration::from_secs(5),
+            },
+            ts(0),
+        )
         .await
         .expect("drain");
         assert!(g.is_gated());
 
-        g.handle(HostToGuest::DrainCancel).await.expect("cancel");
+        g.handle(HostToGuest::DrainCancel, ts(0))
+            .await
+            .expect("cancel");
         assert!(!g.is_gated());
         // Turns flow again.
         assert!(matches!(
@@ -486,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn ping_is_answered_with_pong() {
         let mut g = guest();
-        g.handle(HostToGuest::Ping).await.expect("ping");
+        g.handle(HostToGuest::Ping, ts(0)).await.expect("ping");
         assert!(matches!(g.chan.sent().as_slice(), [GuestToHost::Pong]));
     }
 }

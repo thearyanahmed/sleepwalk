@@ -52,7 +52,7 @@ pub async fn connect(cid: u32, port: u32) -> io::Result<VsockStream> {
 mod tests {
     use std::time::Duration;
 
-    use proto::{GuestToHost, GuestdVersion, VmId};
+    use proto::{GuestToHost, GuestdVersion, Timestamp, VmId};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio_vsock::VMADDR_CID_LOCAL;
 
@@ -76,7 +76,9 @@ mod tests {
             );
             g.handshake().await.expect("handshake");
             let msg = g.channel().recv().await.expect("recv drain");
-            g.handle(msg).await.expect("handle drain");
+            g.handle(msg, Timestamp::from_nanos(0))
+                .await
+                .expect("handle drain");
         });
 
         // Host side: connect over loopback (retry until the guest has bound).
