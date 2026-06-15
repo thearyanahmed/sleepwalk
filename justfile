@@ -83,6 +83,12 @@ hostd-daemon ADDR="0.0.0.0:8080":
 uffd-test:
     cargo test -p hostd 'uffd::' -- --nocapture
 
+# Real AF_VSOCK transport round-trip over loopback. Needs Linux + the
+# vsock_loopback module (no KVM): `just remote-run vsock-test`.
+vsock-test:
+    modprobe vsock_loopback 2>/dev/null || true
+    cargo test -p guestd --features vsock-test 'vsock::' -- --nocapture
+
 # tier 2 · functional KVM (needs /dev/kvm)
 
 # Single-host Firecracker boot lifecycle (needs /dev/kvm + `just fetch`).

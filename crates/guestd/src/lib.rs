@@ -25,6 +25,8 @@ pub mod clock;
 pub mod framing;
 pub mod guest;
 pub mod pseudo_channel;
+#[cfg(target_os = "linux")]
+pub mod vsock;
 
 pub use channel::{ChannelError, GuestChannel};
 pub use clock::ClockFixup;
