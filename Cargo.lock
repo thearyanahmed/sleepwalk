@@ -573,6 +573,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "crc32fast",
+ "harness",
  "http-body-util",
  "hyper",
  "hyper-util",

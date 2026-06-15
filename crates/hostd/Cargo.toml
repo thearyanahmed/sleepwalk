@@ -35,8 +35,17 @@ required-features = ["kvm"]
 name = "hostd"
 path = "src/bin/hostd.rs"
 
+# Live-load benchmark: boot a guest, drive turns over vsock, pause/resume to
+# inject a freeze, and report the latency distribution (the perceived-downtime
+# instrument against a real VM).
+[[bin]]
+name = "loadtest"
+path = "src/bin/loadtest.rs"
+required-features = ["kvm"]
+
 [dependencies]
 proto.workspace = true
+harness.workspace = true
 thiserror.workspace = true
 # anyhow is used only by the migration binaries (bins may use anyhow; the library
 # modules use thiserror).

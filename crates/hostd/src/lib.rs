@@ -29,6 +29,8 @@ pub mod firecracker;
 #[cfg(target_os = "linux")]
 pub mod guestlink;
 #[cfg(target_os = "linux")]
+pub mod guestload;
+#[cfg(target_os = "linux")]
 pub mod migrate;
 pub mod process;
 pub mod pseudo_firecracker;
@@ -47,6 +49,8 @@ pub use firecracker::{
 };
 #[cfg(target_os = "linux")]
 pub use guestlink::{DrainState, GuestLink};
+#[cfg(target_os = "linux")]
+pub use guestload::VsockTurnDriver;
 #[cfg(target_os = "linux")]
 pub use migrate::{
     Artifacts, MigrateError, SourceTiming, bind_receiver, discover_artifacts, migrate_source,
