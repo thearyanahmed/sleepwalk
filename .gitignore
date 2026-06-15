@@ -7,9 +7,10 @@
 # Local config (the committed sample is sleepwalk.example.toml)
 /sleepwalk.toml
 
-# Prometheus scrape targets — may hold real host addresses (committed sample is
-# targets.json.example). Keep your hosts out of version control.
+# Prometheus scrape targets — may hold real host addresses (committed samples are
+# *.json.example). Keep your hosts out of version control.
 /deploy/prometheus/targets.json
+/deploy/prometheus/node-targets.json
 
 # Fetched artifacts (pinned + hashed in images/versions.toml, fetched by `just fetch`)
 /images/artifacts/

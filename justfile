@@ -145,6 +145,7 @@ demo-agent:
 # deploy/prometheus/targets.json (gitignored) to point at your hostd daemons.
 observe:
     cp -n deploy/prometheus/targets.json.example deploy/prometheus/targets.json 2>/dev/null || true
+    cp -n deploy/prometheus/node-targets.json.example deploy/prometheus/node-targets.json 2>/dev/null || true
     docker compose -f deploy/docker-compose.yml up
 
 # Tear the observability stack down.
