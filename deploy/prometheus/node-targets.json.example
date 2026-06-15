@@ -1,10 +1,10 @@
 [
   {
-    "labels": { "job": "node", "host": "a" },
+    "labels": { "job": "node", "host": "server_a" },
     "targets": ["10.0.0.1:9100"]
   },
   {
-    "labels": { "job": "node", "host": "b" },
+    "labels": { "job": "node", "host": "server_b" },
     "targets": ["10.0.0.2:9100"]
   }
 ]
