@@ -55,8 +55,8 @@ pub use guestlink::{DrainState, GuestLink};
 pub use guestload::VsockTurnDriver;
 #[cfg(target_os = "linux")]
 pub use migrate::{
-    Artifacts, MigrateError, SourceTiming, bind_receiver, discover_artifacts, migrate_source,
-    restore_target,
+    Artifacts, MigrateError, MigrateOutcome, SourceTiming, bind_receiver, discover_artifacts,
+    migrate_running, migrate_source, restore_register, restore_target,
 };
 pub use process::FcProcess;
 pub use pseudo_firecracker::PseudoFirecracker;

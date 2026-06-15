@@ -26,6 +26,7 @@ use crate::firecracker::{
 };
 use crate::guestlink::{DrainState, GuestLink};
 use crate::process::FcProcess;
+use crate::registry::{RunningVm, UffdState};
 use crate::telemetry;
 use crate::transfer::{OutboundFile, TransferError, recv_snapshot, send_snapshot};
 use crate::uffd::{UffdError, UffdRestoreHandler};
@@ -216,6 +217,25 @@ pub async fn migrate_source(art: &Artifacts, addr: &str) -> Result<SourceTiming,
     }
     drop(link); // close the control link before pausing
 
+    let timing = snapshot_and_send(&fc, &work, addr).await?;
+    let _ = proc.kill();
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_file(&vsock_uds);
+    telemetry::migration_ok(timing.snapshot + timing.transfer, timing.bytes);
+    Ok(timing)
+}
+
+/// Pause `fc`, snapshot its memory + device state into `work`, and stream both
+/// files to `addr`. Returns the freeze-window timing; the caller owns the VM's
+/// lifecycle (kill / teardown) and any telemetry.
+///
+/// # Errors
+/// If pausing, snapshotting, or the transfer fails.
+async fn snapshot_and_send(
+    fc: &Firecracker,
+    work: &Path,
+    addr: &str,
+) -> Result<SourceTiming, MigrateError> {
     let mem = work.join("mem.snap");
     let state = work.join("state.snap");
 
@@ -244,25 +264,107 @@ pub async fn migrate_source(art: &Artifacts, addr: &str) -> Result<SourceTiming,
     let t2 = Instant::now();
 
     let bytes = std::fs::metadata(&mem).map(|m| m.len()).unwrap_or(0);
-    let _ = proc.kill();
-    let _ = std::fs::remove_dir_all(&work);
-    let _ = std::fs::remove_file(&vsock_uds);
-
-    let timing = SourceTiming {
+    Ok(SourceTiming {
         snapshot: t1 - t0,
         transfer: t2 - t1,
         bytes,
-    };
-    telemetry::migration_ok(timing.snapshot + timing.transfer, bytes);
-    Ok(timing)
+    })
 }
 
-/// Receive one migration on `listener`, restore it via the UFFD page server, and
-/// resume the guest. Tears the VM and handler down before returning.
+/// How migrating a registered, running VM ended.
+pub enum MigrateOutcome {
+    /// The VM was drained, snapshotted, streamed to the target, and torn down
+    /// here. The freeze-window timing is included.
+    Moved(SourceTiming),
+    /// The guest was busy at the drain deadline — by the race rule the turn wins,
+    /// so the migration stood down and the VM is handed back intact to re-register.
+    StoodDown(RunningVm),
+}
+
+/// Migrate a registered, running [`RunningVm`] to `addr`: connect to its guest
+/// over vsock, drain it to quiescence, then snapshot and stream it, tearing the
+/// source VM down on success. On a busy guest it stands down and returns the VM
+/// intact (gate reopened) for the caller to re-register.
+///
+/// # Errors
+/// If the guest is unreachable, the handshake/drain fails for a reason other than
+/// busyness, or the snapshot/transfer fails. The VM is torn down on error.
+pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome, MigrateError> {
+    let link =
+        match GuestLink::connect_retry(&vm.vsock_uds, proto::GUEST_VSOCK_PORT, secs(20)).await {
+            Ok(link) => link,
+            Err(e) => {
+                vm.teardown();
+                return Err(io("connect guest vsock", e));
+            }
+        };
+    if let Err(e) = link.handshake(std::collections::BTreeMap::new()).await {
+        vm.teardown();
+        return Err(io("guest handshake", e));
+    }
+    match link.drain(DRAIN_DEADLINE).await {
+        Ok(DrainState::Quiescent) => {}
+        Ok(DrainState::Busy) => {
+            // Reopen the gate so the in-flight turn (and any queued behind it) run
+            // on, then hand the VM back to be re-registered on this host.
+            let _ = link.send(proto::HostToGuest::DrainCancel).await;
+            drop(link);
+            return Ok(MigrateOutcome::StoodDown(vm));
+        }
+        Err(e) => {
+            vm.teardown();
+            return Err(io("drain guest", e));
+        }
+    }
+    drop(link);
+
+    match snapshot_and_send(&vm.fc, &vm.work, addr).await {
+        Ok(timing) => {
+            telemetry::migration_ok(timing.snapshot + timing.transfer, timing.bytes);
+            vm.teardown();
+            Ok(MigrateOutcome::Moved(timing))
+        }
+        Err(e) => {
+            telemetry::migration_failed();
+            vm.teardown();
+            Err(e)
+        }
+    }
+}
+
+/// Receive one migration on `listener`, restore it via the UFFD page server,
+/// resume the guest, and tear it down — the one-shot path for the benchmark CLI
+/// (prove a VM round-trips). The daemon uses [`restore_register`] instead.
 ///
 /// # Errors
 /// If receiving, restoring, or resuming fails.
 pub async fn restore_target(fc_bin: &Path, listener: &TcpListener) -> Result<(), MigrateError> {
+    let vm = receive_and_restore(fc_bin, listener).await?;
+    vm.teardown();
+    Ok(())
+}
+
+/// Receive one migration and return the restored VM, **left running** with its
+/// UFFD page server owned by the returned [`RunningVm`] — for the daemon to
+/// register into its fleet.
+///
+/// # Errors
+/// If receiving, restoring, or resuming fails.
+pub async fn restore_register(
+    fc_bin: &Path,
+    listener: &TcpListener,
+) -> Result<RunningVm, MigrateError> {
+    receive_and_restore(fc_bin, listener).await
+}
+
+/// The shared restore core: receive the snapshot, stand up the UFFD page server,
+/// spawn the target Firecracker, load the snapshot, and resume — returning the
+/// live VM (process + page-server thread). The caller decides whether to keep it
+/// (register) or tear it down.
+async fn receive_and_restore(
+    fc_bin: &Path,
+    listener: &TcpListener,
+) -> Result<RunningVm, MigrateError> {
     let work = work_dir("tgt");
     std::fs::create_dir_all(&work).map_err(|e| io("create work dir", e))?;
 
@@ -283,21 +385,6 @@ pub async fn restore_target(fc_bin: &Path, listener: &TcpListener) -> Result<(),
         let _ = handler.serve(&mem_thread, &stop_thread);
     });
 
-    let outcome = resume_from_snapshot(fc_bin, &work, &uffd_sock).await;
-
-    stop.store(true, Ordering::Release);
-    let _ = serve.join();
-    let _ = std::fs::remove_dir_all(&work);
-    outcome
-}
-
-/// Spawn the target Firecracker, load the snapshot with the UFFD backend, and
-/// confirm it resumed. The handler thread is owned by the caller.
-async fn resume_from_snapshot(
-    fc_bin: &Path,
-    work: &Path,
-    uffd_sock: &Path,
-) -> Result<(), MigrateError> {
     let mut proc = FcProcess::spawn(
         fc_bin,
         &work.join("fc.sock"),
@@ -306,7 +393,7 @@ async fn resume_from_snapshot(
     )
     .map_err(|e| io("spawn firecracker", e))?;
     let fc = Firecracker::new(work.join("fc.sock"));
-    let res = fc
+    let load = fc
         .load_snapshot(SnapshotSource {
             state_file: work.join("state.snap"),
             backend: MemBackend::Uffd {
@@ -315,11 +402,38 @@ async fn resume_from_snapshot(
             resume: true,
         })
         .await;
-    if res.is_ok() {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+    if let Err(e) = load {
+        // Restore failed: stop the page server, reap the half-started VM, clean up.
+        let _ = proc.kill();
+        stop.store(true, Ordering::Release);
+        let _ = serve.join();
+        let _ = std::fs::remove_dir_all(&work);
+        return Err(MigrateError::from(e));
     }
-    let _ = proc.kill();
-    res.map_err(MigrateError::from)
+    // Give the guest a beat to fault its first pages and prove it resumed.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mib = mem_mib(&work.join("mem.snap"));
+    Ok(RunningVm {
+        id: proto::VmId::new(),
+        proc,
+        fc,
+        work,
+        // The restored VM's vsock socket path lives in the snapshot, not chosen
+        // here, so it is not re-migratable yet — terminal on this host for now.
+        vsock_uds: PathBuf::new(),
+        mib,
+        uffd: Some(UffdState {
+            stop,
+            thread: serve,
+        }),
+    })
+}
+
+/// A snapshot's guest memory size in MiB, from the mem file length.
+fn mem_mib(mem: &Path) -> u32 {
+    let bytes = std::fs::metadata(mem).map(|m| m.len()).unwrap_or(0);
+    (bytes / (1024 * 1024)) as u32
 }
 
 /// Bind a receiver socket for [`restore_target`].

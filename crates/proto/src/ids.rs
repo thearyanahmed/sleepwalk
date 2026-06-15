@@ -51,6 +51,16 @@ impl fmt::Display for VmId {
     }
 }
 
+impl std::str::FromStr for VmId {
+    type Err = uuid::Error;
+
+    /// Parse the canonical UUID form — the inverse of [`Display`](fmt::Display),
+    /// so an id round-trips through the daemon's HTTP surface.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.parse()?))
+    }
+}
+
 /// Names a host in the fleet (e.g. `host-a`, a hostname, a chroot label).
 ///
 /// Opaque on purpose: hostd assigns the strings, proto only carries them.

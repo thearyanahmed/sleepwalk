@@ -13,7 +13,9 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use proto::{HostId, VmId};
@@ -35,10 +37,21 @@ const BOOT_ARGS: &str = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw
 /// Per-process sequence so concurrent spawns get distinct work dirs / sockets.
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// The UFFD page server that backs a VM restored on this host. The serving
+/// thread must outlive the restore: pages are faulted from the snapshot file
+/// lazily for the VM's whole life, so the registry owns it until teardown.
+#[derive(Debug)]
+pub struct UffdState {
+    /// Signals the serving thread to stop.
+    pub stop: Arc<AtomicBool>,
+    /// The serving thread, joined at teardown after the VM is killed.
+    pub thread: JoinHandle<()>,
+}
+
 /// One running VM the daemon owns.
 #[derive(Debug)]
 pub struct RunningVm {
-    /// The VM's id (its identity across a migration).
+    /// The VM's id (its identity on this host).
     pub id: VmId,
     /// The live Firecracker process; killed when the VM is removed.
     pub proc: FcProcess,
@@ -46,16 +59,26 @@ pub struct RunningVm {
     pub fc: Firecracker,
     /// The per-VM work dir (sockets, logs).
     pub work: PathBuf,
-    /// The host-side vsock unix socket.
+    /// The host-side vsock unix socket. Empty for a VM restored from a migration
+    /// (its socket path lives in the snapshot, not chosen here), which is why such
+    /// a VM is terminal for now — it is counted but not re-migrated.
     pub vsock_uds: PathBuf,
     /// The VM's memory size, in MiB — its contribution to host pressure.
     pub mib: u32,
+    /// The UFFD page server, present only for a VM restored from a migration.
+    pub uffd: Option<UffdState>,
 }
 
 impl RunningVm {
-    /// Kill the Firecracker process and remove the VM's work dir and socket.
+    /// Kill the Firecracker process, stop any UFFD server, and remove the VM's
+    /// work dir and socket. Order matters: the VM is killed first so it stops
+    /// faulting, then the page-server thread is joined, then its files go.
     pub fn teardown(mut self) {
         let _ = self.proc.kill();
+        if let Some(uffd) = self.uffd {
+            uffd.stop.store(true, Ordering::Release);
+            let _ = uffd.thread.join();
+        }
         let _ = std::fs::remove_dir_all(&self.work);
         let _ = std::fs::remove_file(&self.vsock_uds);
     }
@@ -145,9 +168,21 @@ impl VmRegistry {
                 work,
                 vsock_uds,
                 mib,
+                uffd: None,
             },
         );
         Ok(id)
+    }
+
+    /// Register an already-running VM (e.g. one just restored from a migration).
+    pub async fn insert(&self, vm: RunningVm) {
+        self.vms.lock().await.insert(vm.id, vm);
+    }
+
+    /// Deregister the VM `id` and hand it back to the caller, *without* tearing it
+    /// down — for migrating it out, where the caller drives its snapshot.
+    pub async fn take(&self, id: &VmId) -> Option<RunningVm> {
+        self.vms.lock().await.remove(id)
     }
 
     /// Deregister and tear down the VM `id`, if present.

@@ -114,8 +114,8 @@ async fn route(
         (&Method::GET, "/metrics") => text(StatusCode::OK, &state.handle.render()),
         (&Method::GET, "/status") => status(&state).await,
         (&Method::POST, "/vms/spawn") => vms_spawn(&req, &state).await,
-        (&Method::POST, "/migrate/send") => migrate_send(&req).await,
-        (&Method::POST, "/migrate/recv") => migrate_recv(&req).await,
+        (&Method::POST, "/migrate/send") => migrate_send(&req, &state).await,
+        (&Method::POST, "/migrate/recv") => migrate_recv(&req, &state).await,
         _ => text(StatusCode::NOT_FOUND, "not found\n"),
     };
     Ok(resp)
@@ -171,23 +171,56 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-async fn migrate_send(req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
-    let Some(to) = query_param(req.uri().query(), "to") else {
+fn timing_json(t: &hostd::SourceTiming) -> String {
+    serde_json::json!({
+        "snapshot_ms": t.snapshot.as_secs_f64() * 1000.0,
+        "transfer_ms": t.transfer.as_secs_f64() * 1000.0,
+        "bytes": t.bytes,
+    })
+    .to_string()
+}
+
+#[cfg(target_os = "linux")]
+async fn migrate_send(
+    req: &Request<hyper::body::Incoming>,
+    state: &AppState,
+) -> Response<Full<Bytes>> {
+    let query = req.uri().query();
+    let Some(to) = query_param(query, "to") else {
         return text(StatusCode::BAD_REQUEST, "missing ?to=IP:PORT\n");
     };
+
+    // ?vm=ID migrates that registered, running VM (the fleet path). Without it,
+    // boot a fresh VM and send it (the standalone benchmark path).
+    if let Some(vm) = query_param(query, "vm") {
+        let id = match vm.parse::<proto::VmId>() {
+            Ok(id) => id,
+            Err(e) => return text(StatusCode::BAD_REQUEST, &format!("bad vm id: {e}\n")),
+        };
+        let Some(running) = state.registry.take(&id).await else {
+            return text(StatusCode::NOT_FOUND, "no such vm here\n");
+        };
+        return match hostd::migrate_running(running, &to).await {
+            Ok(hostd::MigrateOutcome::Moved(t)) => {
+                text(StatusCode::OK, &format!("{}\n", timing_json(&t)))
+            }
+            Ok(hostd::MigrateOutcome::StoodDown(vm)) => {
+                state.registry.insert(vm).await;
+                text(StatusCode::CONFLICT, "guest busy; migration stood down\n")
+            }
+            Err(e) => {
+                hostd::telemetry::migration_failed();
+                text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n"))
+            }
+        };
+    }
+
     let art = match hostd::discover_artifacts() {
         Ok(a) => a,
         Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
     };
     match hostd::migrate_source(&art, &to).await {
-        Ok(t) => {
-            let body = serde_json::json!({
-                "snapshot_ms": t.snapshot.as_secs_f64() * 1000.0,
-                "transfer_ms": t.transfer.as_secs_f64() * 1000.0,
-                "bytes": t.bytes,
-            });
-            text(StatusCode::OK, &format!("{body}\n"))
-        }
+        Ok(t) => text(StatusCode::OK, &format!("{}\n", timing_json(&t))),
         Err(e) => {
             hostd::telemetry::migration_failed();
             text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n"))
@@ -196,7 +229,10 @@ async fn migrate_send(req: &Request<hyper::body::Incoming>) -> Response<Full<Byt
 }
 
 #[cfg(target_os = "linux")]
-async fn migrate_recv(req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn migrate_recv(
+    req: &Request<hyper::body::Incoming>,
+    state: &AppState,
+) -> Response<Full<Bytes>> {
     let Some(listen) = query_param(req.uri().query(), "listen") else {
         return text(StatusCode::BAD_REQUEST, "missing ?listen=ADDR\n");
     };
@@ -209,25 +245,35 @@ async fn migrate_recv(req: &Request<hyper::body::Incoming>) -> Response<Full<Byt
         Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
     };
     // Return once we are listening; the restore runs in the background so the
-    // caller (the rebalancer) can fire the source send next. Outcome is recorded
-    // to telemetry.
+    // caller (the rebalancer) can fire the source send next. The restored VM is
+    // registered into this host's fleet; outcome is recorded to telemetry.
     let fc_bin = art.fc_bin.clone();
+    let registry = std::sync::Arc::clone(&state.registry);
     tokio::spawn(async move {
-        if let Err(e) = hostd::restore_target(&fc_bin, &listener).await {
-            hostd::telemetry::migration_failed();
-            eprintln!("hostd: restore failed: {e}");
+        match hostd::restore_register(&fc_bin, &listener).await {
+            Ok(vm) => registry.insert(vm).await,
+            Err(e) => {
+                hostd::telemetry::migration_failed();
+                eprintln!("hostd: restore failed: {e}");
+            }
         }
     });
     text(StatusCode::ACCEPTED, "receiving\n")
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn migrate_send(_req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn migrate_send(
+    _req: &Request<hyper::body::Incoming>,
+    _state: &AppState,
+) -> Response<Full<Bytes>> {
     text(StatusCode::NOT_IMPLEMENTED, "migration requires Linux\n")
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn migrate_recv(_req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn migrate_recv(
+    _req: &Request<hyper::body::Incoming>,
+    _state: &AppState,
+) -> Response<Full<Bytes>> {
     text(StatusCode::NOT_IMPLEMENTED, "migration requires Linux\n")
 }
 
