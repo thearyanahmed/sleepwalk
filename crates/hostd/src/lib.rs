@@ -26,6 +26,8 @@
 
 pub mod drain;
 pub mod firecracker;
+#[cfg(target_os = "linux")]
+pub mod migrate;
 pub mod process;
 pub mod pseudo_firecracker;
 pub mod quiesce;
@@ -40,6 +42,11 @@ pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
     SnapshotSource, SnapshotTarget,
+};
+#[cfg(target_os = "linux")]
+pub use migrate::{
+    Artifacts, MigrateError, SourceTiming, bind_receiver, discover_artifacts, migrate_source,
+    restore_target,
 };
 pub use process::FcProcess;
 pub use pseudo_firecracker::PseudoFirecracker;

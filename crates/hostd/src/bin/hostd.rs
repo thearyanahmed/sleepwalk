@@ -3,13 +3,15 @@
 //! Long-lived: started once per server (under systemd), it owns that host's VMs
 //! and exposes an HTTP surface. This first slice is the observable skeleton —
 //!
-//!   GET /healthz   liveness ("ok")
-//!   GET /metrics   Prometheus exposition (scraped by Prometheus, shown in Grafana)
+//!   GET  /healthz                  liveness ("ok")
+//!   GET  /metrics                  Prometheus exposition (scraped → Grafana)
+//!   POST /migrate/send?to=IP:PORT  boot+snapshot a VM here, stream it to a peer
+//!   POST /migrate/recv?listen=ADDR receive one migration, UFFD-restore + resume
 //!
-//! Migration control endpoints (drive a send/receive, managed VM lifecycle) land
-//! next; the point of the daemon is that migrations happen through it, with no
-//! per-migration process spawning or `pkill` — it runs continuously and is
-//! reaped only by its service manager.
+//! Migrations happen *through* the daemon: it runs continuously and is reaped
+//! only by its service manager, so there is no per-migration process spawning or
+//! `pkill`. The migrate endpoints need Linux + `/dev/kvm`; elsewhere they answer
+//! 501 so the daemon still builds and serves metrics on any platform.
 //!
 //! Usage: `hostd daemon <listen_addr>`   (e.g. `hostd daemon 0.0.0.0:8080`)
 
@@ -20,7 +22,7 @@ use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::net::TcpListener;
@@ -81,12 +83,80 @@ async fn route(
     req: Request<hyper::body::Incoming>,
     handle: PrometheusHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let resp = match req.uri().path() {
-        "/healthz" => text(StatusCode::OK, "ok\n"),
-        "/metrics" => text(StatusCode::OK, &handle.render()),
+    let resp = match (req.method(), req.uri().path()) {
+        (&Method::GET, "/healthz") => text(StatusCode::OK, "ok\n"),
+        (&Method::GET, "/metrics") => text(StatusCode::OK, &handle.render()),
+        (&Method::POST, "/migrate/send") => migrate_send(&req).await,
+        (&Method::POST, "/migrate/recv") => migrate_recv(&req).await,
         _ => text(StatusCode::NOT_FOUND, "not found\n"),
     };
     Ok(resp)
+}
+
+/// Extract a query parameter `key` from a `k=v&k2=v2` query string.
+#[cfg(target_os = "linux")]
+fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    query?.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.to_owned())
+    })
+}
+
+#[cfg(target_os = "linux")]
+async fn migrate_send(req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+    let Some(to) = query_param(req.uri().query(), "to") else {
+        return text(StatusCode::BAD_REQUEST, "missing ?to=IP:PORT\n");
+    };
+    let art = match hostd::discover_artifacts() {
+        Ok(a) => a,
+        Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    };
+    match hostd::migrate_source(&art, &to).await {
+        Ok(t) => {
+            let body = serde_json::json!({
+                "snapshot_ms": t.snapshot.as_secs_f64() * 1000.0,
+                "transfer_ms": t.transfer.as_secs_f64() * 1000.0,
+                "bytes": t.bytes,
+            });
+            text(StatusCode::OK, &format!("{body}\n"))
+        }
+        Err(e) => {
+            hostd::telemetry::migration_failed();
+            text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n"))
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn migrate_recv(req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+    let Some(listen) = query_param(req.uri().query(), "listen") else {
+        return text(StatusCode::BAD_REQUEST, "missing ?listen=ADDR\n");
+    };
+    let art = match hostd::discover_artifacts() {
+        Ok(a) => a,
+        Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    };
+    let listener = match hostd::bind_receiver(&listen).await {
+        Ok(l) => l,
+        Err(e) => return text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n")),
+    };
+    match hostd::restore_target(&art.fc_bin, &listener).await {
+        Ok(()) => text(StatusCode::OK, "restored\n"),
+        Err(e) => {
+            hostd::telemetry::migration_failed();
+            text(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}\n"))
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn migrate_send(_req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+    text(StatusCode::NOT_IMPLEMENTED, "migration requires Linux\n")
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn migrate_recv(_req: &Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+    text(StatusCode::NOT_IMPLEMENTED, "migration requires Linux\n")
 }
 
 fn text(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
