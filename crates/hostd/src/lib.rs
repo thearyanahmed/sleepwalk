@@ -30,6 +30,7 @@ pub mod process;
 pub mod pseudo_firecracker;
 pub mod quiesce;
 pub mod statedir;
+pub mod telemetry;
 pub mod transfer;
 #[cfg(target_os = "linux")]
 pub mod uffd;

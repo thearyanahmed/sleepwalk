@@ -44,6 +44,9 @@ bytes.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 crc32fast.workspace = true
+# Metrics facade + Prometheus pull exporter (the /metrics endpoint Grafana scrapes).
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
 
 # UFFD lazy restore is a Linux-kernel feature (userfaultfd(2)); these only build
 # on Linux. On macOS the uffd module is cfg'd out, so the rest of the crate still
