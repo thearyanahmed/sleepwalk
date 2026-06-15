@@ -128,7 +128,18 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
             None => {
-                println!("step {step}: converged (no host over watermark)");
+                // Distinguish "fleet is fine" from "a host is hot but no
+                // compatible cooler target exists" (e.g. the only cooler host is
+                // in a different CPU/TSC class) — otherwise the log is misleading.
+                let hot = pressure.values().any(|p| p.get() > cfg.watermark);
+                if hot {
+                    println!(
+                        "step {step}: no eligible move — a host is over watermark but no \
+                         compatible cooler target (CPU/TSC class)"
+                    );
+                } else {
+                    println!("step {step}: converged (no host over watermark)");
+                }
                 return Ok(());
             }
         }
