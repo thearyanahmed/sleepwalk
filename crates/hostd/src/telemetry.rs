@@ -9,7 +9,9 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use metrics::{Unit, counter, describe_counter, describe_histogram, histogram};
+use metrics::{
+    Unit, counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram,
+};
 use metrics_exporter_prometheus::{BuildError, PrometheusBuilder, PrometheusHandle};
 
 /// Migrations that completed successfully.
@@ -20,6 +22,11 @@ pub const MIGRATION_FAILURES_TOTAL: &str = "sleepwalk_migration_failures_total";
 pub const FREEZE_WINDOW_SECONDS: &str = "sleepwalk_freeze_window_seconds";
 /// Cumulative snapshot bytes moved across migrations.
 pub const SNAPSHOT_BYTES_TOTAL: &str = "sleepwalk_snapshot_bytes_total";
+/// Per-VM presence: a gauge labelled `vm_id`, `host`, `ip`, set to 1 while the
+/// VM runs on this host and 0 once it leaves (migrated out or torn down). The
+/// label set is what makes a migration visible: the same `vm_id` flips to a new
+/// `host`/`ip`. Filter on `== 1` to list only VMs that are actually here.
+pub const VM_INFO: &str = "sleepwalk_vm_info";
 
 /// Register descriptions and units for the metrics. Idempotent; call at startup.
 pub fn describe() {
@@ -35,6 +42,24 @@ pub fn describe() {
         Unit::Bytes,
         "Cumulative snapshot bytes moved"
     );
+    describe_gauge!(
+        VM_INFO,
+        "VM presence on this host (1 = here), labelled by vm_id/host/ip"
+    );
+}
+
+/// Mark VM `vm_id` as present on `host` with address `ip` (set the gauge to 1).
+/// Call on spawn and on restore-as-migration-target.
+pub fn vm_present(vm_id: &str, host: &str, ip: &str) {
+    gauge!(VM_INFO, "vm_id" => vm_id.to_owned(), "host" => host.to_owned(), "ip" => ip.to_owned())
+        .set(1.0);
+}
+
+/// Mark VM `vm_id` as gone from `host` (set the gauge to 0): migrated out or torn
+/// down. The series lingers at 0 so panels filtering `== 1` drop it cleanly.
+pub fn vm_absent(vm_id: &str, host: &str, ip: &str) {
+    gauge!(VM_INFO, "vm_id" => vm_id.to_owned(), "host" => host.to_owned(), "ip" => ip.to_owned())
+        .set(0.0);
 }
 
 /// Record a successful migration's source cost.
@@ -87,6 +112,8 @@ mod tests {
         migration_ok(Duration::from_millis(1500), 268_435_456);
         migration_ok(Duration::from_millis(1600), 268_435_456);
         migration_failed();
+        vm_present("vm-7", "a", "10.200.0.5");
+        vm_absent("vm-9", "a", "10.200.0.6");
 
         let text = handle.render();
         assert!(
@@ -99,5 +126,12 @@ mod tests {
             "freeze histogram:\n{text}"
         );
         assert!(text.contains(SNAPSHOT_BYTES_TOTAL), "bytes:\n{text}");
+        // The presence gauge carries its labels through to the exposition, and a
+        // present VM reads 1.
+        assert!(text.contains(VM_INFO), "vm_info gauge:\n{text}");
+        assert!(
+            text.contains("vm_id=\"vm-7\"") && text.contains("ip=\"10.200.0.5\""),
+            "vm_info labels:\n{text}"
+        );
     }
 }

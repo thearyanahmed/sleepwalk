@@ -196,6 +196,7 @@ impl VmRegistry {
         }
         fc.boot().await?;
 
+        let ip = vm_ip(&net).to_owned();
         self.vms.lock().await.insert(
             id,
             RunningVm {
@@ -209,18 +210,24 @@ impl VmRegistry {
                 net,
             },
         );
+        crate::telemetry::vm_present(&id.to_string(), &self.host.to_string(), &ip);
         Ok(id)
     }
 
     /// Register an already-running VM (e.g. one just restored from a migration).
     pub async fn insert(&self, vm: RunningVm) {
+        crate::telemetry::vm_present(&vm.id.to_string(), &self.host.to_string(), vm_ip(&vm.net));
         self.vms.lock().await.insert(vm.id, vm);
     }
 
     /// Deregister the VM `id` and hand it back to the caller, *without* tearing it
     /// down — for migrating it out, where the caller drives its snapshot.
     pub async fn take(&self, id: &VmId) -> Option<RunningVm> {
-        self.vms.lock().await.remove(id)
+        let vm = self.vms.lock().await.remove(id);
+        if let Some(vm) = &vm {
+            crate::telemetry::vm_absent(&id.to_string(), &self.host.to_string(), vm_ip(&vm.net));
+        }
+        vm
     }
 
     /// Deregister and tear down the VM `id`, if present.
@@ -228,6 +235,7 @@ impl VmRegistry {
         let vm = self.vms.lock().await.remove(id);
         let found = vm.is_some();
         if let Some(vm) = vm {
+            crate::telemetry::vm_absent(&id.to_string(), &self.host.to_string(), vm_ip(&vm.net));
             vm.teardown();
         }
         found
@@ -243,6 +251,11 @@ impl VmRegistry {
             pressure: crate::sysmem::memory_pressure(),
         }
     }
+}
+
+/// The VM's address for telemetry labels, or `"none"` if it has no network.
+fn vm_ip(net: &Option<crate::net::NetId>) -> &str {
+    net.as_ref().map(|n| n.ip.as_str()).unwrap_or("none")
 }
 
 fn io(context: &str, source: std::io::Error) -> MigrateError {
