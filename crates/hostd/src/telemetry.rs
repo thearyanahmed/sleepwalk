@@ -27,6 +27,10 @@ pub const SNAPSHOT_BYTES_TOTAL: &str = "sleepwalk_snapshot_bytes_total";
 /// label set is what makes a migration visible: the same `vm_id` flips to a new
 /// `host`/`ip`. Filter on `== 1` to list only VMs that are actually here.
 pub const VM_INFO: &str = "sleepwalk_vm_info";
+/// Host info: a constant gauge (1) labelled `host` and `class` (the CPU/TSC
+/// compatibility-class label). Lets the dashboard show each host's class and
+/// group VMs by the class they can migrate within.
+pub const HOST_INFO: &str = "sleepwalk_host_info";
 /// Test-side turns driven at a guest, labelled `vm_id` and `outcome` (`ok` or
 /// `dropped`). This is the load generator's own view, not the VM's: `rate()` of
 /// the `ok` series is the request rate the demo holds flat through a migration,
@@ -55,6 +59,15 @@ pub fn describe() {
         TEST_TURNS_TOTAL,
         "Load-generator turns by vm_id and outcome (ok/dropped)"
     );
+    describe_gauge!(
+        HOST_INFO,
+        "Host present (1), labelled by host and compatibility class"
+    );
+}
+
+/// Publish this host's compatibility class as a labelled gauge (always 1).
+pub fn host_class(host: &str, class: &str) {
+    gauge!(HOST_INFO, "host" => host.to_owned(), "class" => class.to_owned()).set(1.0);
 }
 
 /// Record one load-generator turn against `vm_id`: `ok` true if the guest

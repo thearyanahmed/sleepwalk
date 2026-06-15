@@ -24,6 +24,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod compat;
 pub mod drain;
 pub mod firecracker;
 #[cfg(target_os = "linux")]
@@ -47,6 +48,7 @@ pub mod transfer;
 pub mod uffd;
 pub mod vm;
 
+pub use compat::CompatClass;
 pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,

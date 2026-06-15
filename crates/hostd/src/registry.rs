@@ -105,6 +105,10 @@ pub struct HostStatus {
     pub vms: Vec<String>,
     /// Live host memory pressure in `[0, 1]`, sampled from `/proc/meminfo`.
     pub pressure: f64,
+    /// This host's CPU/TSC compatibility class — a VM may only be restored on a
+    /// host whose class is [`compatible_with`](crate::CompatClass::compatible_with)
+    /// this one. The rebalancer uses it to filter migration targets.
+    pub compat: crate::CompatClass,
 }
 
 /// The set of VMs running on one host.
@@ -112,15 +116,20 @@ pub struct HostStatus {
 pub struct VmRegistry {
     vms: Mutex<BTreeMap<VmId, RunningVm>>,
     host: HostId,
+    compat: crate::CompatClass,
 }
 
 impl VmRegistry {
-    /// A registry for `host`.
+    /// A registry for `host`. Detects this host's compatibility class once at
+    /// startup (a brief TSC measurement).
     #[must_use]
     pub fn new(host: HostId) -> Self {
+        let compat = crate::compat::detect();
+        crate::telemetry::host_class(&host.to_string(), &compat.label());
         Self {
             vms: Mutex::new(BTreeMap::new()),
             host,
+            compat,
         }
     }
 
@@ -249,6 +258,7 @@ impl VmRegistry {
             host: self.host.to_string(),
             vms: vms.keys().map(ToString::to_string).collect(),
             pressure: crate::sysmem::memory_pressure(),
+            compat: self.compat.clone(),
         }
     }
 }
