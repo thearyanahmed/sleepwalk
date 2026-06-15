@@ -30,6 +30,11 @@ name = "migrate"
 path = "src/bin/migrate.rs"
 required-features = ["kvm"]
 
+# The per-host daemon: long-lived, serves /healthz + /metrics (Prometheus pull).
+[[bin]]
+name = "hostd"
+path = "src/bin/hostd.rs"
+
 [dependencies]
 proto.workspace = true
 thiserror.workspace = true
@@ -37,7 +42,7 @@ thiserror.workspace = true
 # modules use thiserror).
 anyhow.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "fs", "io-util", "time"] }
-hyper = { workspace = true, features = ["http1", "client"] }
+hyper = { workspace = true, features = ["http1", "client", "server"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 http-body-util.workspace = true
 bytes.workspace = true

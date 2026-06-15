@@ -74,6 +74,10 @@ remote-setup *ARGS:
 remote-run TARGET:
     scripts/host.sh a run {{TARGET}}
 
+# Run the per-host daemon (serves /healthz + /metrics). Runs anywhere.
+hostd-daemon ADDR="0.0.0.0:8080":
+    cargo run -q -p hostd --bin hostd -- daemon {{ADDR}}
+
 # UFFD lazy-restore page server. Needs Linux (userfaultfd) but NOT KVM, so it
 # runs on any Linux box: `just remote-run uffd-test`.
 uffd-test:

@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use metrics::{Unit, counter, describe_counter, describe_histogram, histogram};
-use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
+use metrics_exporter_prometheus::{BuildError, PrometheusBuilder, PrometheusHandle};
 
 /// Migrations that completed successfully.
 pub const MIGRATIONS_TOTAL: &str = "sleepwalk_migrations_total";
@@ -50,7 +50,7 @@ pub fn migration_failed() {
 }
 
 /// Install the global Prometheus recorder and serve the metrics text on `addr`
-/// at `/metrics`. Call once at daemon startup, inside a tokio runtime.
+/// at `/metrics` (the exporter's own HTTP listener). Call once at startup.
 ///
 /// # Errors
 /// If a recorder is already installed or the listener cannot be set up.
@@ -60,6 +60,17 @@ pub fn install_exporter(addr: SocketAddr) -> Result<(), BuildError> {
         .install()?;
     describe();
     Ok(())
+}
+
+/// Install the global Prometheus recorder and return a handle to render the
+/// metrics text on demand — for serving `/metrics` from one's own HTTP server.
+///
+/// # Errors
+/// If a recorder is already installed.
+pub fn recorder() -> Result<PrometheusHandle, BuildError> {
+    let handle = PrometheusBuilder::new().install_recorder()?;
+    describe();
+    Ok(handle)
 }
 
 #[cfg(test)]
