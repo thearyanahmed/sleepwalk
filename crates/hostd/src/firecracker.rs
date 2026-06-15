@@ -101,6 +101,20 @@ pub struct VsockConfig {
     pub uds_path: PathBuf,
 }
 
+/// A virtio-net device (`PUT /network-interfaces/{iface_id}`): the host tap it is
+/// backed by and the guest's MAC. The MAC is fixed per VM so it stays stable
+/// across a migration — the guest keeps its L2 identity on the new host, which is
+/// what lets a client's connection follow the VM.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NetworkConfig {
+    /// Firecracker's id for the interface (e.g. `eth0`).
+    pub iface_id: String,
+    /// The host tap device backing the interface (`host_dev_name`).
+    pub host_dev_name: String,
+    /// The guest MAC (`guest_mac`); fixed per VM for migration stability.
+    pub guest_mac: String,
+}
+
 /// Where a snapshot's two files are written (`PUT /snapshot/create`). The VM
 /// must be paused first.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +179,11 @@ pub trait FirecrackerApi {
     fn configure_vsock(
         &self,
         cfg: VsockConfig,
+    ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
+    /// Attach a virtio-net device before boot (`PUT /network-interfaces/{id}`).
+    fn configure_network(
+        &self,
+        cfg: NetworkConfig,
     ) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
     /// Start the configured guest (boot the kernel).
     fn boot(&self) -> impl std::future::Future<Output = Result<(), FirecrackerError>> + Send;
@@ -345,6 +364,20 @@ impl FirecrackerApi for Firecracker {
             "configure_vsock",
         )?;
         self.send(Method::PUT, "/vsock", body, "configure_vsock")
+            .await
+    }
+
+    async fn configure_network(&self, cfg: NetworkConfig) -> Result<(), FirecrackerError> {
+        let path = format!("/network-interfaces/{}", cfg.iface_id);
+        let body = json_body(
+            &serde_json::json!({
+                "iface_id": cfg.iface_id,
+                "host_dev_name": cfg.host_dev_name,
+                "guest_mac": cfg.guest_mac,
+            }),
+            "configure_network",
+        )?;
+        self.send(Method::PUT, &path, body, "configure_network")
             .await
     }
 
@@ -558,6 +591,25 @@ mod tests {
         assert_eq!(
             c.body,
             r#"{"drive_id":"rootfs","is_read_only":true,"is_root_device":true,"path_on_host":"/img/root.ext4"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn configure_network_targets_the_iface_path_and_mac() {
+        let (fc, cap) = stub(OK_204).await;
+        fc.configure_network(NetworkConfig {
+            iface_id: "eth0".to_owned(),
+            host_dev_name: "tap-vm0".to_owned(),
+            guest_mac: "02:00:00:00:00:02".to_owned(),
+        })
+        .await
+        .expect("configure ok");
+        let c = cap.lock().await;
+        assert_eq!(c.method, "PUT");
+        assert_eq!(c.path, "/network-interfaces/eth0");
+        assert_eq!(
+            c.body,
+            r#"{"guest_mac":"02:00:00:00:00:02","host_dev_name":"tap-vm0","iface_id":"eth0"}"#
         );
     }
 

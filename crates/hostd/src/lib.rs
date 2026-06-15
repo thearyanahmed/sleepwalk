@@ -48,7 +48,7 @@ pub mod vm;
 pub use drain::{DrainCoordinator, DrainVerdict};
 pub use firecracker::{
     BootSource, Drive, Firecracker, FirecrackerApi, FirecrackerError, MachineConfig, MemBackend,
-    SnapshotSource, SnapshotTarget, VsockConfig,
+    NetworkConfig, SnapshotSource, SnapshotTarget, VsockConfig,
 };
 #[cfg(target_os = "linux")]
 pub use guestlink::{DrainState, GuestLink};
