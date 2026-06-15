@@ -26,7 +26,7 @@ path = "src/bin/guestd.rs"
 proto.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "macros", "sync", "io-util"] }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "io-util", "process"] }
 
 # Real AF_VSOCK transport — Linux only. On macOS the vsock module is cfg'd out, so
 # the supervisor still builds and tests against the in-memory channel.

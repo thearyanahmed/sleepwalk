@@ -13,10 +13,13 @@
 //! - [`clock::ClockFixup`] — the post-restore clock correction: maps the guest's
 //!   frozen clock back onto true wall-clock time so timestamps stay comparable
 //!   across a migration.
+//! - [`wrap`] — wrap mode: infer turn boundaries from an arbitrary child's
+//!   stdout, the zero-code adoption path. The classifier and signal
+//!   application are tested against the fake channel here; the child-process
+//!   supervision loop that uses them lives in the `guestd` binary.
 //!
-//! The real transport, `VsockChannel` (`AF_VSOCK`), and process-wrapping require
-//! a running guest and land in a later slice; everything here is tested against
-//! the fake.
+//! The real transport, `VsockChannel` (`AF_VSOCK`), lands in a `/dev/kvm`
+//! session; everything here is tested against the fake.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
@@ -27,9 +30,11 @@ pub mod guest;
 pub mod pseudo_channel;
 #[cfg(target_os = "linux")]
 pub mod vsock;
+pub mod wrap;
 
 pub use channel::{ChannelError, GuestChannel};
 pub use clock::ClockFixup;
 pub use framing::JsonLineChannel;
 pub use guest::{Guest, GuestError, StartOutcome};
 pub use pseudo_channel::PseudoChannel;
+pub use wrap::{TurnSignal, WrapConfig};

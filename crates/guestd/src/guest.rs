@@ -196,6 +196,23 @@ impl<C: GuestChannel> Guest<C> {
         Ok(StartOutcome::Started(turn_id))
     }
 
+    /// Begin a turn that a wrapped child process has *already started* (wrap
+    /// mode, [`crate::wrap`]).
+    ///
+    /// Unlike [`start_turn`](Self::start_turn) this does **not** consult the
+    /// drain gate: the work is running in an external process guestd does not
+    /// control, so it cannot be deferred — the only correct thing is to report
+    /// it. Keeping `in_flight` truthful is exactly what lets the `DrainAck` tell
+    /// hostd to wait (passive drain). Errors with
+    /// [`TurnInProgress`](GuestError::TurnInProgress) if a turn is already in
+    /// flight; the wrap driver guards against that and ignores the duplicate.
+    pub async fn begin_observed_turn(&mut self, now: Timestamp) -> Result<TurnId, GuestError> {
+        if let Some(in_flight) = self.in_flight {
+            return Err(GuestError::TurnInProgress { in_flight });
+        }
+        self.begin_turn(now).await
+    }
+
     /// Replay one turn from the backlog that built up while the gate was closed.
     ///
     /// Returns the started turn's id, or `None` when the backlog is empty. The

@@ -9,6 +9,33 @@ document; where they ever disagree, this document is the spec.
 change with a CHANGELOG entry and a version bump; it is frozen at the v0.1.0
 release.
 
+## Adoption modes
+
+There are two ways to put a workload under `sleepwalk`, both producing the same
+wire messages below:
+
+- **Wrap mode (zero code).** The stock `guestd` supervises an arbitrary command
+  and *infers* turn boundaries from its **stdout**: a line equal to a configured
+  start marker opens a turn (`TurnStarted`), a line equal to the end marker
+  closes it (`TurnEnded`). Set `SLEEPWALK_WRAP_CMD` to the command (run under
+  `/bin/sh -c`); `SLEEPWALK_WRAP_START` / `SLEEPWALK_WRAP_END` override the
+  default markers (`@@TURN_START@@` / `@@TURN_END@@`). Any other output is passed
+  through to guestd's log. Good for job-shaped workloads that can print a line at
+  the edges of a unit of work. The wrapped process keeps running across a
+  migration — its in-RAM state is carried in the snapshot — so it must not assume
+  a stable host clock or local-only network state across a turn boundary.
+
+  Wrap mode only *observes*: guestd cannot defer a turn the child has already
+  begun. Drain is therefore **passive** — the host waits until the child is
+  between turns (no turn in flight) before snapshotting. New turns are not gated
+  or queued; that is the native-mode guarantee.
+
+- **Native mode (exact boundaries).** The workload (or its harness) speaks the
+  vsock messages directly — `TurnStarted` / `TurnEnded` / `DrainAck` — for exact
+  turn boundaries and active gating: new turns that arrive after a `DrainRequest`
+  are queued in-guest and replayed after resume (the race rule below). This is
+  what an agent/turn-shaped integration uses.
+
 ## Transport
 
 Newline-delimited JSON over vsock. Each VM has its own vsock context id (CID);
