@@ -128,6 +128,27 @@ a lower bound on total perceived downtime. Transfer dominates and scales with
 guest RAM — diff snapshots and a faster path are the levers. 1-vCPU droplets, so
 not representative numbers.
 
+## Limitations
+
+- **Linux + KVM, x86_64** for the VM-facing paths. The host-agnostic logic builds
+  and tests anywhere; booting/migrating a microVM needs `/dev/kvm`.
+- **Snapshots are CPU-compatibility-bound.** A snapshot can only be restored on a
+  host whose CPU is compatible with the one that took it — same vendor, and a
+  **TSC frequency within ~250 ppm** (or a host with hardware TSC scaling).
+  Firecracker rescales the guest TSC on restore via `KVM_SET_TSC_KHZ`; if the
+  target lacks scaling and the frequencies differ, the restore fails. sleepwalk
+  models this as a **compatibility class** per host (`vendor / model / TSC /
+  kernel`, see [ADR-004](docs/adr/0004-cpu-tsc-compatibility-classes.md)) and the
+  rebalancer only moves a VM **within a class** — a cross-class move is refused
+  up front instead of failing at load. Note that on shared clouds the *same
+  instance size can land on different physical CPUs*, so a fleet is naturally
+  multi-class; class-aware placement is required, not optional. Cross-vendor
+  (Intel↔AMD) live restore is never possible.
+- **No live TCP migration.** Relocation happens at verified quiescence, when no
+  connections are in flight — by design.
+- **Pre-1.0.** CLI, config, and the guest protocol may change with a CHANGELOG
+  entry and a version bump.
+
 ## License
 
 Apache-2.0.
