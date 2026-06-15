@@ -13,13 +13,13 @@ release.
 
 Newline-delimited JSON over vsock. Each VM has its own vsock context id (CID);
 the host listens on a fixed port. One JSON object per line, UTF-8. Messages are
-**externally tagged**: a payload message is `{"<Variant>": { ...fields }}` and a
-fieldless message is the bare string `"<Variant>"`.
+**internally tagged**: every message is a flat object with a `type` field naming
+the message, plus that message's fields. A fieldless message is just `{"type":"<Name>"}`.
 
 ```
-{"Hello":{"vm_id":"7e57...","guestd_version":"0.1.0"}}
-{"TurnStarted":{"turn_id":7,"ts":1700000000000000000}}
-"Ping"
+{"type":"Hello","vm_id":"7e57...","guestd_version":"0.1.0"}
+{"type":"TurnStarted","turn_id":7,"ts":1700000000000000000}
+{"type":"Ping"}
 ```
 
 ## Messages

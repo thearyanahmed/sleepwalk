@@ -3,9 +3,10 @@
 //! Newline-delimited JSON over a per-VM vsock CID on a fixed port. The two
 //! enums are split by **direction** so an illegal message is unrepresentable:
 //! a guest cannot construct a [`HostToGuest::Secrets`], and hostd cannot forge
-//! a [`GuestToHost::TurnStarted`]. Both enums are externally tagged, so the
-//! wire form of `Ping` is the string `"Ping"` and of a payload variant is
-//! `{"TurnStarted": { .. }}` — directly readable by a non-Rust guest (O8).
+//! a [`GuestToHost::TurnStarted`]. Both enums are **internally tagged** with a
+//! `type` field, so every message is a flat JSON object — `{"type":"Ping"}`,
+//! `{"type":"TurnStarted","turn_id":7,"ts":..}` — directly readable and writable
+//! by a non-Rust guest (O8).
 //!
 //! Mirrors the message table in `docs/protocol.md`.
 
@@ -18,6 +19,7 @@ use crate::ids::{GuestdVersion, Timestamp, TurnId, VmId};
 
 /// Messages the guestd sends to hostd.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum GuestToHost {
     /// Boot handshake — the first message after the guest comes up. Lets hostd
     /// bind this vsock connection to a [`VmId`] and check the guest's
@@ -70,6 +72,7 @@ pub enum GuestToHost {
 
 /// Messages hostd sends to the guestd.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum HostToGuest {
     /// API-key/secret handoff at boot. Delivered over vsock precisely so it is
     /// never baked into the rootfs or the kernel cmdline (ADR-005). The
@@ -158,6 +161,26 @@ mod tests {
         }
     }
 
+    /// Every message is a flat, internally-tagged object: a `type` field plus the
+    /// variant's fields, never a `{"Variant":{..}}` wrapper.
+    #[test]
+    fn messages_are_internally_tagged() {
+        let hello = serde_json::to_string(&GuestToHost::Hello {
+            vm_id: VmId::from_uuid(uuid::Uuid::nil()),
+            guestd_version: GuestdVersion::new("0.1.0"),
+        })
+        .expect("serialize");
+        assert_eq!(
+            hello,
+            r#"{"type":"Hello","vm_id":"00000000-0000-0000-0000-000000000000","guestd_version":"0.1.0"}"#
+        );
+        // A fieldless message is still a typed object, not a bare string.
+        assert_eq!(
+            serde_json::to_string(&GuestToHost::Ping).expect("serialize"),
+            r#"{"type":"Ping"}"#
+        );
+    }
+
     /// `in_flight: None` must serialize as JSON `null`, not be omitted — the
     /// distinction (gated-and-idle vs. field-absent) is load-bearing for the
     /// quiescence gate, so it stays explicit on the wire.
@@ -165,7 +188,7 @@ mod tests {
     fn drain_ack_none_is_explicit_null() {
         let json =
             serde_json::to_string(&GuestToHost::DrainAck { in_flight: None }).expect("serialize");
-        assert_eq!(json, r#"{"DrainAck":{"in_flight":null}}"#);
+        assert_eq!(json, r#"{"type":"DrainAck","in_flight":null}"#);
     }
 
     /// A `Duration` deadline crosses the wire as the integer `deadline_ms`.
@@ -175,6 +198,6 @@ mod tests {
             deadline: Duration::from_millis(250),
         })
         .expect("serialize");
-        assert_eq!(json, r#"{"DrainRequest":{"deadline_ms":250}}"#);
+        assert_eq!(json, r#"{"type":"DrainRequest","deadline_ms":250}"#);
     }
 }

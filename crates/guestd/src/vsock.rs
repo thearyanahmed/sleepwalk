@@ -101,11 +101,11 @@ mod tests {
 
         // Reply Secrets (completes the guest handshake), then drain.
         write
-            .write_all(b"{\"Secrets\":{\"env\":{}}}\n")
+            .write_all(b"{\"type\":\"Secrets\",\"env\":{}}\n")
             .await
             .expect("write secrets");
         write
-            .write_all(b"{\"DrainRequest\":{\"deadline_ms\":5000}}\n")
+            .write_all(b"{\"type\":\"DrainRequest\",\"deadline_ms\":5000}\n")
             .await
             .expect("write drain");
         write.flush().await.expect("flush");

@@ -104,10 +104,12 @@ mod tests {
         let (guest, mut host) = tokio::io::duplex(1024);
         let chan = JsonLineChannel::new(guest);
         // A payload variant and a unit variant, each one canonical JSON line.
-        host.write_all(b"{\"DrainRequest\":{\"deadline_ms\":250}}\n")
+        host.write_all(b"{\"type\":\"DrainRequest\",\"deadline_ms\":250}\n")
             .await
             .expect("write drain");
-        host.write_all(b"\"Ping\"\n").await.expect("write ping");
+        host.write_all(b"{\"type\":\"Ping\"}\n")
+            .await
+            .expect("write ping");
 
         let first = chan.recv().await.expect("recv 1");
         assert!(matches!(first, HostToGuest::DrainRequest { .. }));
