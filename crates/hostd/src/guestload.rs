@@ -36,6 +36,9 @@ pub struct VsockTurnDriver {
     waiters: Waiters,
     deadline: Duration,
     dropped: Arc<AtomicU64>,
+    /// The VM this driver targets — the `vm_id` label on the test-turn metric, so
+    /// the load's request rate can be sliced per VM in the dashboard.
+    vm_id: Arc<str>,
 }
 
 impl VsockTurnDriver {
@@ -46,7 +49,7 @@ impl VsockTurnDriver {
     /// every outstanding waiter, so no [`run_turn`](harness::TurnDriver::run_turn)
     /// hangs.
     #[must_use]
-    pub fn new(link: Arc<GuestLink>, deadline: Duration) -> Self {
+    pub fn new(link: Arc<GuestLink>, deadline: Duration, vm_id: impl Into<Arc<str>>) -> Self {
         let waiters: Waiters = Arc::new(Mutex::new(HashMap::new()));
         let link_r = Arc::clone(&link);
         let waiters_r = Arc::clone(&waiters);
@@ -71,6 +74,7 @@ impl VsockTurnDriver {
             waiters,
             deadline,
             dropped: Arc::new(AtomicU64::new(0)),
+            vm_id: vm_id.into(),
         }
     }
 
@@ -93,6 +97,7 @@ impl harness::TurnDriver for VsockTurnDriver {
             .is_err()
         {
             self.waiters.lock().await.remove(&id);
+            crate::telemetry::test_turn(&self.vm_id, false);
             return;
         }
         // Resolves when the router gets this turn's TurnEnded, when the link
@@ -102,6 +107,9 @@ impl harness::TurnDriver for VsockTurnDriver {
         if tokio::time::timeout(self.deadline, rx).await.is_err() {
             self.waiters.lock().await.remove(&id);
             self.dropped.fetch_add(1, Ordering::Relaxed);
+            crate::telemetry::test_turn(&self.vm_id, false);
+        } else {
+            crate::telemetry::test_turn(&self.vm_id, true);
         }
     }
 }

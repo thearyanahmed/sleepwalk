@@ -99,7 +99,13 @@ async fn main() -> anyhow::Result<()> {
     // A turn that gets no reply within this deadline counts as a client-visible
     // drop. Generous vs. a healthy turn (sub-ms) so only genuinely lost turns
     // (those put on the wire while the guest is paused) hit it.
-    let driver = Arc::new(VsockTurnDriver::new(Arc::new(link), Duration::from_secs(3)));
+    let vm_label = proto::VmId::new().to_string();
+    println!("loadtest: driving vm {vm_label}");
+    let driver = Arc::new(VsockTurnDriver::new(
+        Arc::new(link),
+        Duration::from_secs(3),
+        vm_label,
+    ));
 
     let schedule = Schedule::generate(rate, duration, Arrivals::Poisson { seed: 1 });
     let n = schedule.len();

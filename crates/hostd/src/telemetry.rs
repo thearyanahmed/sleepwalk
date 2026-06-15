@@ -27,6 +27,11 @@ pub const SNAPSHOT_BYTES_TOTAL: &str = "sleepwalk_snapshot_bytes_total";
 /// label set is what makes a migration visible: the same `vm_id` flips to a new
 /// `host`/`ip`. Filter on `== 1` to list only VMs that are actually here.
 pub const VM_INFO: &str = "sleepwalk_vm_info";
+/// Test-side turns driven at a guest, labelled `vm_id` and `outcome` (`ok` or
+/// `dropped`). This is the load generator's own view, not the VM's: `rate()` of
+/// the `ok` series is the request rate the demo holds flat through a migration,
+/// and the `dropped` series spikes by exactly the turns lost to the freeze.
+pub const TEST_TURNS_TOTAL: &str = "sleepwalk_test_turns_total";
 
 /// Register descriptions and units for the metrics. Idempotent; call at startup.
 pub fn describe() {
@@ -46,6 +51,18 @@ pub fn describe() {
         VM_INFO,
         "VM presence on this host (1 = here), labelled by vm_id/host/ip"
     );
+    describe_counter!(
+        TEST_TURNS_TOTAL,
+        "Load-generator turns by vm_id and outcome (ok/dropped)"
+    );
+}
+
+/// Record one load-generator turn against `vm_id`: `ok` true if the guest
+/// completed it, false if it was dropped (no completion in the deadline, or the
+/// link was gone).
+pub fn test_turn(vm_id: &str, ok: bool) {
+    let outcome = if ok { "ok" } else { "dropped" };
+    counter!(TEST_TURNS_TOTAL, "vm_id" => vm_id.to_owned(), "outcome" => outcome).increment(1);
 }
 
 /// Mark VM `vm_id` as present on `host` with address `ip` (set the gauge to 1).
@@ -114,6 +131,8 @@ mod tests {
         migration_failed();
         vm_present("vm-7", "a", "10.200.0.5");
         vm_absent("vm-9", "a", "10.200.0.6");
+        test_turn("vm-7", true);
+        test_turn("vm-7", false);
 
         let text = handle.render();
         assert!(
@@ -132,6 +151,12 @@ mod tests {
         assert!(
             text.contains("vm_id=\"vm-7\"") && text.contains("ip=\"10.200.0.5\""),
             "vm_info labels:\n{text}"
+        );
+        // Test-turn counter splits by outcome.
+        assert!(text.contains(TEST_TURNS_TOTAL), "test turns:\n{text}");
+        assert!(
+            text.contains("outcome=\"ok\"") && text.contains("outcome=\"dropped\""),
+            "test-turn outcomes:\n{text}"
         );
     }
 }
