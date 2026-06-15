@@ -1,0 +1,10 @@
+[
+  {
+    "labels": { "job": "node", "host": "a" },
+    "targets": ["host.docker.internal:9100"]
+  },
+  {
+    "labels": { "job": "node", "host": "b" },
+    "targets": ["10.0.0.2:9100"]
+  }
+]

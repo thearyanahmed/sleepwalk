@@ -6,7 +6,17 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
+  # Each hostd daemon's /metrics (migrations, freeze window, per-VM info, load).
   - job_name: hostd
     file_sd_configs:
       - files:
           - /etc/prometheus/targets.json
+
+  # node_exporter on each host (:9100) for machine resources — CPU, memory,
+  # disk, net. Provision with `scripts/host.sh <a|b> node-exporter`. Give each
+  # target a `host` label matching that host's hostd id so the dashboard can join
+  # machine resources to VMs by host.
+  - job_name: node
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/node-targets.json

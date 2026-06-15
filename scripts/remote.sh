@@ -17,6 +17,7 @@
 #   scripts/remote.sh ssh [cmd...]                        shell in / run a command
 #   scripts/remote.sh setup [args...]                     sync, then scripts/setup.sh
 #   scripts/remote.sh run <just-target> [args...]         sync, then `just <target>`
+#   scripts/remote.sh node-exporter                       install + start node_exporter (:9100)
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -94,6 +95,39 @@ cmd_run() {
     cmd_ssh "cd '$RPATH' && { [ -f \"\$HOME/.cargo/env\" ] && . \"\$HOME/.cargo/env\"; }; just $*"
 }
 
+# Version of node_exporter to install on hosts for machine-resource metrics.
+NODE_EXPORTER_VERSION="1.8.2"
+
+# Install (if missing) and (re)start prometheus node_exporter on the host,
+# listening on 0.0.0.0:9100 so the Prometheus stack can scrape machine
+# resources (CPU, memory, disk, net). Idempotent; safe to re-run.
+cmd_node_exporter() {
+    _log "installing + starting node_exporter $NODE_EXPORTER_VERSION on $TARGET"
+    cmd_ssh "NODE_EXPORTER_VERSION='$NODE_EXPORTER_VERSION' bash -s" <<'REMOTE'
+set -euo pipefail
+case "$(uname -m)" in
+    x86_64) a=amd64 ;;
+    aarch64) a=arm64 ;;
+    *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
+esac
+bin="$HOME/.local/bin/node_exporter"
+mkdir -p "$HOME/.local/bin"
+if [ ! -x "$bin" ]; then
+    tmp="$(mktemp -d)"
+    url="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-${a}.tar.gz"
+    echo "downloading $url"
+    curl -fsSL "$url" | tar xz -C "$tmp" --strip-components=1
+    install -m755 "$tmp/node_exporter" "$bin"
+    rm -rf "$tmp"
+fi
+# -x: exact match, never the ssh shell running this.
+pkill -x node_exporter 2>/dev/null || true
+nohup "$bin" --web.listen-address=0.0.0.0:9100 >/tmp/node_exporter.log 2>&1 &
+sleep 1
+echo "node_exporter up: $(curl -fsS localhost:9100/metrics | head -1)"
+REMOTE
+}
+
 case "${1:-}" in
     sync) cmd_sync ;;
     ssh)
@@ -108,5 +142,6 @@ case "${1:-}" in
         shift
         cmd_run "$@"
         ;;
-    *) _die "usage: remote.sh {sync | ssh [cmd] | setup [args] | run <just-target>}" ;;
+    node-exporter) cmd_node_exporter ;;
+    *) _die "usage: remote.sh {sync | ssh [cmd] | setup [args] | run <just-target> | node-exporter}" ;;
 esac
