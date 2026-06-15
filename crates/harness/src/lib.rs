@@ -16,15 +16,20 @@
 //!   over thousands of deterministic, seeded interleavings (objective O4).
 //! - [`report`] — the measurement report: per-migration records as a JSON
 //!   artifact in, the `results/report.md` markdown tables out.
+//! - [`loadgen`] — the open-loop generator: fires turns at their intended times
+//!   against a [`loadgen::TurnDriver`] and records intended-time latency, so a
+//!   migration's freeze shows up in the tail instead of vanishing.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod chaos;
+pub mod loadgen;
 pub mod recorder;
 pub mod report;
 pub mod schedule;
 
 pub use chaos::{RaceReport, simulate};
+pub use loadgen::{TurnDriver, run_load};
 pub use recorder::{LatencyRecorder, LatencyStats, RecordError};
 pub use report::{
     IdleGapBucket, LatencySlice, Methodology, MigrationRecord, RunReport, render_markdown,
