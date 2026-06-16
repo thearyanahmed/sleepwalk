@@ -9,7 +9,18 @@
 source "$(dirname "$0")/ensure-env.sh"
 
 reset_daemon() { # label host_id
-    sh_host "$1" "pkill -x hostd 2>/dev/null; sleep 2; sudo pkill -9 -f '[f]irecracker' 2>/dev/null; sleep 1; for t in \$(ip -o link show|grep -oE 'sw-tap[0-9]+'|sort -u); do sudo ip link del \$t 2>/dev/null; done; rm -rf /tmp/sleepwalk-vm-* 2>/dev/null; cd sleepwalk && setsid nohup target/release/hostd daemon 0.0.0.0:8080 $2 >/tmp/hostd.log 2>&1 </dev/null & sleep 2; true" >/dev/null || true
+    # The setsid'd daemon keeps the ssh channel open, so the call never returns
+    # cleanly — bound it with a short timeout. The daemon is detached and survives
+    # the killed ssh; we confirm it's actually up with wait_healthz afterwards.
+    timeout 12 "$HOST" "$1" ssh "pkill -x hostd 2>/dev/null; sleep 2; sudo pkill -9 -f '[f]irecracker' 2>/dev/null; sleep 1; for t in \$(ip -o link show|grep -oE 'sw-tap[0-9]+'|sort -u); do sudo ip link del \$t 2>/dev/null; done; rm -rf /tmp/sleepwalk-vm-* 2>/dev/null; cd sleepwalk && setsid nohup target/release/hostd daemon 0.0.0.0:8080 $2 >/tmp/hostd.log 2>&1 </dev/null & sleep 2; true" >/dev/null 2>&1 || true
+}
+wait_healthz() { # ip
+    local i
+    for i in $(seq 1 20); do
+        [[ "$(curl -s -m3 "http://$1:8080/healthz" 2>/dev/null)" == "ok" ]] && return 0
+        sleep 1
+    done
+    _die "daemon at $1 did not come up"
 }
 ensure_net() { # label up-arg local-ip remote-ip
     sh_host "$1" "cd sleepwalk; sudo scripts/net-host.sh up $2 >/dev/null 2>&1; sudo scripts/net-host.sh vxlan $3 $4 >/dev/null 2>&1; true" >/dev/null || true
@@ -26,6 +37,9 @@ ensure_dnat() { # label
 _log "resetting daemons (A=gateway .1, B=peer .254) + overlay + DNAT"
 reset_daemon a server_a
 reset_daemon b server_b
+_log "waiting for daemons"
+wait_healthz "$A"
+wait_healthz "$B"
 ensure_net a "10.200.0.1/24" "$A" "$B"
 ensure_net b "none" "$B" "$A"
 ensure_dnat a
