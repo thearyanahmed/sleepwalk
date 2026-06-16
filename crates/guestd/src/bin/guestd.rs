@@ -23,7 +23,7 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::process::Stdio;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use guestd::GuestChannel;
     use guestd::guest::Guest;
@@ -82,12 +82,19 @@ mod linux {
     /// session at a time; loop so the target host can reconnect after a move.
     async fn run_host_driven(version: GuestdVersion) {
         loop {
-            let chan = match serve(DEFAULT_PORT).await {
-                Ok(c) => c,
-                Err(e) => {
+            // Bind+accept with a timeout so a listener gone stale across a
+            // snapshot/restore (its accept never fires on the new host) is dropped
+            // and re-bound. Without this a restored VM can never be reconnected to,
+            // so it can't be drained for a re-migration — the "terminal restored
+            // VM" limitation.
+            let chan = match tokio::time::timeout(Duration::from_secs(5), serve(DEFAULT_PORT)).await
+            {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
+                Err(_) => continue, // accept timed out — re-bind a fresh listener
             };
             // A fresh VmId per process; hostd binds the connection to it via the
             // Hello. (A real deployment passes the id in on the kernel cmdline.)
@@ -123,12 +130,19 @@ mod linux {
         let mut child_done = false;
         let mut first_connection = true;
         loop {
-            let chan = match serve(DEFAULT_PORT).await {
-                Ok(c) => c,
-                Err(e) => {
+            // Bind+accept with a timeout so a listener gone stale across a
+            // snapshot/restore (its accept never fires on the new host) is dropped
+            // and re-bound. Without this a restored VM can never be reconnected to,
+            // so it can't be drained for a re-migration — the "terminal restored
+            // VM" limitation.
+            let chan = match tokio::time::timeout(Duration::from_secs(5), serve(DEFAULT_PORT)).await
+            {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
+                Err(_) => continue, // accept timed out — re-bind a fresh listener
             };
             let mut g = Guest::new(VmId::new(), version.clone(), chan);
             if let Err(e) = g.handshake().await {
