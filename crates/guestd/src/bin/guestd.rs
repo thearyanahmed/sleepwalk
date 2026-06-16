@@ -22,6 +22,7 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::collections::BTreeMap;
     use std::process::Stdio;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -102,7 +103,7 @@ mod linux {
         tokio::spawn(serve_tcp_drain(version.clone()));
         // Wrap mode if a command is declared; otherwise the host drives turns.
         match wrap_config_from_env() {
-            Some((cmd, cfg)) => run_wrapped(version, cmd, cfg).await,
+            Some((cmd, cfg)) => run_wrapped(version, cmd, cfg, wrap_await_secrets()).await,
             None => run_host_driven(version).await,
         }
     }
@@ -155,19 +156,30 @@ mod linux {
     /// every host (re)connection — its in-RAM state is exactly what the snapshot
     /// carries across a migration. guestd is re-created per connection (the
     /// source host's connection dies at restore; the target host dials in fresh).
-    async fn run_wrapped(version: GuestdVersion, cmd: String, cfg: WrapConfig) {
+    async fn run_wrapped(
+        version: GuestdVersion,
+        cmd: String,
+        cfg: WrapConfig,
+        await_secrets: bool,
+    ) {
         println!("guestd: wrap mode — supervising `{cmd}`");
-        // Start the workload immediately — it must not wait for a host to dial
-        // in. Its in-RAM state is what the snapshot carries across a migration;
-        // guestd is re-created per host connection (the source connection dies at
-        // restore; the target host dials in fresh), but the child runs throughout.
-        let (_child, mut lines) = match spawn_child(&cmd) {
-            Ok(cl) => cl,
-            Err(e) => {
-                eprintln!("guestd: spawn `{cmd}`: {e}");
-                std::process::exit(1);
+        // The child is spawned exactly once and outlives every host (re)connection
+        // — its in-RAM state is what the snapshot carries across a migration. Two
+        // spawn timings:
+        //   * default: start immediately at boot (synthetic workload, no secret).
+        //   * await_secrets: defer until the first handshake delivers `Secrets`,
+        //     then spawn with them in the child's environment (e.g. a coding agent
+        //     that needs an API key at exec — see `wrap_await_secrets`).
+        let mut child: Option<(Child, ChildLines)> = None;
+        if !await_secrets {
+            match spawn_child(&cmd, &BTreeMap::new()) {
+                Ok(cl) => child = Some(cl),
+                Err(e) => {
+                    eprintln!("guestd: spawn `{cmd}`: {e}");
+                    std::process::exit(1);
+                }
             }
-        };
+        }
         let mut child_done = false;
         let mut first_connection = true;
         loop {
@@ -194,7 +206,22 @@ mod linux {
 
             if first_connection {
                 first_connection = false;
-                println!("guestd: host connected; child already running");
+                if await_secrets && child.is_none() {
+                    // Deferred spawn: the handshake just delivered `Secrets`, so
+                    // start the child now with them in its environment.
+                    match spawn_child(&cmd, g.secrets()) {
+                        Ok(cl) => {
+                            child = Some(cl);
+                            println!("guestd: secrets received; child started");
+                        }
+                        Err(e) => {
+                            eprintln!("guestd: spawn `{cmd}`: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    println!("guestd: host connected; child already running");
+                }
             } else {
                 // A later connection means we came up on a new host after a
                 // restore: announce we are alive (the `Resumed` clock fix-up
@@ -212,6 +239,17 @@ mod linux {
                 serve_messages_only(&mut g).await;
                 continue;
             }
+
+            // Borrow the child's stdout reader for turn inference. `None` is only
+            // possible in await_secrets mode if the spawn above failed (which exits)
+            // — defensive fall-through to message-only serving keeps PID 1 alive.
+            let lines = match child.as_mut() {
+                Some((_, lines)) => lines,
+                None => {
+                    serve_messages_only(&mut g).await;
+                    continue;
+                }
+            };
 
             loop {
                 tokio::select! {
@@ -255,9 +293,26 @@ mod linux {
         }
     }
 
+    /// A line reader over the wrapped child's stdout.
+    type ChildLines = tokio::io::Lines<BufReader<tokio::process::ChildStdout>>;
+
     /// Path the rootfs can drop a wrap command into when no env is set — how the
     /// minimal guest image (which has no shell to export env) selects wrap mode.
     const WRAP_CMD_FILE: &str = "/etc/sleepwalk/wrap-cmd";
+
+    /// Presence selects "defer the wrapped child until the first handshake delivers
+    /// `Secrets`, then spawn it with them in its environment" — the path a workload
+    /// that needs a boot secret (e.g. a coding agent's API key) uses. Created by the
+    /// rootfs build for that profile; absent for the synthetic profile.
+    const WRAP_AWAIT_SECRETS_FILE: &str = "/etc/sleepwalk/wrap-await-secrets";
+
+    /// Whether to defer the wrapped child until `Secrets` arrive (see
+    /// [`WRAP_AWAIT_SECRETS_FILE`]). Off by default; on via that file or the
+    /// `SLEEPWALK_WRAP_AWAIT_SECRETS` env var.
+    fn wrap_await_secrets() -> bool {
+        std::env::var_os("SLEEPWALK_WRAP_AWAIT_SECRETS").is_some()
+            || std::path::Path::new(WRAP_AWAIT_SECRETS_FILE).exists()
+    }
 
     /// Resolve the wrap-mode configuration, or `None` for host-driven mode.
     ///
@@ -282,25 +337,20 @@ mod linux {
         Some((cmd, cfg))
     }
 
-    /// Spawn the wrapped command (exec'd directly, argv split on whitespace) and
-    /// return its handle plus a line reader over its stdout.
+    /// Spawn the wrapped command (exec'd directly, argv split on whitespace) with
+    /// `env` in its environment, returning its handle plus a stdout line reader.
     ///
-    /// The child starts at boot, before any host connects, so it does not receive
-    /// the `Secrets` env (which arrives on a later handshake) — wrap mode is for
-    /// workloads that need no boot secret. Native mode is the path for secret
-    /// handoff at exec.
-    fn spawn_child(
-        cmd: &str,
-    ) -> std::io::Result<(
-        Child,
-        tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
-    )> {
+    /// `env` is empty for the synthetic profile (spawned at boot, no secret) and
+    /// the handshake `Secrets` for the await-secrets profile (spawned after the
+    /// first handshake so a coding agent gets its API key at exec). Secrets stay in
+    /// memory only — never the rootfs image, never the kernel cmdline.
+    fn spawn_child(cmd: &str, env: &BTreeMap<String, String>) -> std::io::Result<(Child, ChildLines)> {
         let mut argv = cmd.split_whitespace();
         let program = argv
             .next()
             .ok_or_else(|| std::io::Error::other("empty wrap command"))?;
         let mut command = Command::new(program);
-        command.args(argv).stdout(Stdio::piped());
+        command.args(argv).envs(env).stdout(Stdio::piped());
         let mut child = command.spawn()?;
         let stdout = child
             .stdout
