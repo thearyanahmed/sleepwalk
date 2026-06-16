@@ -142,14 +142,16 @@ demo-agent:
     @echo "not implemented yet (agent demo)" && exit 1
 
 # Live-migration demo (reads .env): a stateful in-RAM app survives an A->B move.
-# `demo-up` preps a fresh VM; `demo-watch` (terminal 1) hammers it; `demo-migrate`
-# (terminal 2) moves it. See scripts/demo.sh.
-demo-up:
-    scripts/demo.sh up
-demo-watch:
-    scripts/demo.sh watch
-demo-migrate:
-    scripts/demo.sh migrate
+# prepare = fresh VM; long-process (terminal 1) = client load; status (terminal 2,
+# live) = prints on change; migrate (terminal 2) = move the VM. See scripts/.
+prepare:
+    scripts/prepare.sh
+long-process:
+    scripts/long-process.sh
+migrate:
+    scripts/migrate.sh
+demo-status:
+    scripts/status.sh
 
 # Prometheus + Grafana stack (Grafana at http://localhost:3000). Edit
 # deploy/prometheus/targets.json (gitignored) to point at your hostd daemons.
