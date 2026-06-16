@@ -491,10 +491,10 @@ async fn receive_and_restore(
         }
     }
 
-    // The source's vsock uds path, carried over as groundwork for re-migration.
-    // It is recorded on the restored VM, but Firecracker does not re-create the
-    // host socket on load, so draining a restored VM still needs the vsock device
-    // re-established first — until then a restored VM remains terminal.
+    // The source's vsock uds path, carried over for re-migration. Firecracker DOES
+    // re-create this host socket on load — but it does not deliver host->guest
+    // connections to the restored guest, so draining a restored VM needs a
+    // guest-INITIATED reconnect instead (see the spike below).
     let vsock_uds = {
         let p = work.join("vsock.txt");
         if p.exists() {
@@ -505,6 +505,35 @@ async fn receive_and_restore(
             PathBuf::new()
         }
     };
+
+    // SPIKE: host->guest vsock is dead after restore; does guest->host work? FC
+    // routes a guest connect to host port P to the unix socket "<uds>_P". Listen
+    // there briefly and log whether the restored guest dials in (it probes every
+    // few seconds). If yes, that's the channel to drive a re-migration's drain.
+    if !vsock_uds.as_os_str().is_empty() {
+        let mux = PathBuf::from(format!("{}_5253", vsock_uds.display()));
+        let _ = std::fs::remove_file(&mux);
+        match tokio::net::UnixListener::bind(&mux) {
+            Ok(listener) => {
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    match tokio::time::timeout(secs(25), listener.accept()).await {
+                        Ok(Ok((mut s, _))) => {
+                            let mut buf = [0u8; 64];
+                            let n = s.read(&mut buf).await.unwrap_or(0);
+                            eprintln!(
+                                "hostd: SPIKE guest->host vsock OK post-restore: {:?}",
+                                String::from_utf8_lossy(&buf[..n])
+                            );
+                        }
+                        _ => eprintln!("hostd: SPIKE guest->host vsock NOT received in 25s"),
+                    }
+                    let _ = std::fs::remove_file(&mux);
+                });
+            }
+            Err(e) => eprintln!("hostd: SPIKE bind {}: {e}", mux.display()),
+        }
+    }
 
     let mib = mem_mib(&work.join("mem.snap"));
     Ok(RunningVm {

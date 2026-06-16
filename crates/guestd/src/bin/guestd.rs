@@ -43,6 +43,18 @@ mod linux {
         Timestamp::from_nanos(nanos)
     }
 
+    /// SPIKE: attempt a guest-initiated vsock connection to the host, to learn
+    /// whether guest->host reachability survives a snapshot restore (host->guest
+    /// does not). Best-effort; on the common no-listener case it just fails quietly.
+    async fn host_probe() {
+        use tokio::io::AsyncWriteExt;
+        // VMADDR_CID_HOST = 2; the host listens on port 5253 only during a restore.
+        if let Ok(mut s) = guestd::vsock::connect(2, 5253).await {
+            let _ = s.write_all(b"probe from guest\n").await;
+            let _ = s.flush().await;
+        }
+    }
+
     pub fn main() {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -95,7 +107,10 @@ mod linux {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
-                Err(_) => continue, // accept timed out — re-bind a fresh listener
+                Err(_) => {
+                    host_probe().await; // SPIKE: can we reach the host guest-initiated?
+                    continue; // accept timed out — re-bind a fresh listener
+                }
             };
             // A fresh VmId per process; hostd binds the connection to it via the
             // Hello. (A real deployment passes the id in on the kernel cmdline.)
@@ -144,7 +159,10 @@ mod linux {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
-                Err(_) => continue, // accept timed out — re-bind a fresh listener
+                Err(_) => {
+                    host_probe().await; // SPIKE: can we reach the host guest-initiated?
+                    continue; // accept timed out — re-bind a fresh listener
+                }
             };
             let mut g = Guest::new(VmId::new(), version.clone(), chan);
             if let Err(e) = g.handshake().await {
