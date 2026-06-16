@@ -41,3 +41,10 @@ pub const PROTOCOL_VERSION: &str = "v1-draft";
 /// The vsock port the in-VM guestd listens on and hostd connects to. Part of the
 /// contract: a non-Rust guest must serve on this port.
 pub const GUEST_VSOCK_PORT: u32 = 5252;
+
+/// The TCP port (on the guest network) guestd also serves the protocol on, and
+/// hostd uses to drain a guest. Unlike vsock — which Firecracker's device stops
+/// servicing after a snapshot restore — the guest network survives a restore, so
+/// this channel is what makes draining (and thus re-migrating) a *restored* VM
+/// possible. Only meaningful for networked VMs.
+pub const GUEST_DRAIN_TCP_PORT: u16 = 5252;

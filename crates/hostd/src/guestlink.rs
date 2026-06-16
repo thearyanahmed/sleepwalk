@@ -13,8 +13,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use proto::{GuestToHost, HostToGuest};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, ReadHalf, WriteHalf};
-use tokio::net::UnixStream;
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, ReadHalf, WriteHalf,
+};
+use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::Mutex;
 
 /// The result of asking the guest to drain.
@@ -26,14 +28,53 @@ pub enum DrainState {
     Busy,
 }
 
-/// A connected control link to one guest over vsock.
+/// A connected control link to one guest. Generic over the transport: the
+/// default is Firecracker's vsock (unix socket); the TCP variant talks to guestd
+/// over the guest network, which — unlike vsock — survives a snapshot restore and
+/// so is how a *restored* VM is drained for a re-migration.
 #[derive(Debug)]
-pub struct GuestLink {
-    reader: Mutex<BufReader<ReadHalf<UnixStream>>>,
-    writer: Mutex<WriteHalf<UnixStream>>,
+pub struct GuestLink<R = ReadHalf<UnixStream>, W = WriteHalf<UnixStream>> {
+    reader: Mutex<BufReader<R>>,
+    writer: Mutex<W>,
 }
 
-impl GuestLink {
+impl GuestLink<ReadHalf<TcpStream>, WriteHalf<TcpStream>> {
+    /// Connect to guestd's TCP drain port at `addr` (`ip:port`) over the guest
+    /// network. No vsock CONNECT handshake — it's a plain TCP stream.
+    ///
+    /// # Errors
+    /// If the TCP connection fails.
+    pub async fn connect_tcp(addr: &str) -> io::Result<Self> {
+        let stream = TcpStream::connect(addr).await?;
+        let (read, write) = tokio::io::split(stream);
+        Ok(Self {
+            reader: Mutex::new(BufReader::new(read)),
+            writer: Mutex::new(write),
+        })
+    }
+
+    /// Retry [`connect_tcp`](Self::connect_tcp) until it succeeds or `timeout`
+    /// elapses.
+    ///
+    /// # Errors
+    /// The last connection error if `timeout` elapses first.
+    pub async fn connect_tcp_retry(addr: &str, timeout: Duration) -> io::Result<Self> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut last = io::Error::other("no attempt");
+        while tokio::time::Instant::now() < deadline {
+            match Self::connect_tcp(addr).await {
+                Ok(link) => return Ok(link),
+                Err(e) => {
+                    last = e;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            }
+        }
+        Err(last)
+    }
+}
+
+impl GuestLink<ReadHalf<UnixStream>, WriteHalf<UnixStream>> {
     /// Connect to the guest's vsock `port` via Firecracker's host-side `uds`.
     ///
     /// # Errors
@@ -81,7 +122,13 @@ impl GuestLink {
         }
         Err(last)
     }
+}
 
+impl<R, W> GuestLink<R, W>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     /// Send one message to the guest.
     ///
     /// # Errors

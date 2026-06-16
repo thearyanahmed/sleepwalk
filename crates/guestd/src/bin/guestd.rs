@@ -43,15 +43,40 @@ mod linux {
         Timestamp::from_nanos(nanos)
     }
 
-    /// SPIKE: attempt a guest-initiated vsock connection to the host, to learn
-    /// whether guest->host reachability survives a snapshot restore (host->guest
-    /// does not). Best-effort; on the common no-listener case it just fails quietly.
-    async fn host_probe() {
-        use tokio::io::AsyncWriteExt;
-        // VMADDR_CID_HOST = 2; the host listens on port 5253 only during a restore.
-        if let Ok(mut s) = guestd::vsock::connect(2, 5253).await {
-            let _ = s.write_all(b"probe from guest\n").await;
-            let _ = s.flush().await;
+    /// Serve the guest protocol over TCP on the guest network, in parallel with
+    /// the vsock listener. This is the channel hostd uses to **drain** the guest:
+    /// Firecracker's vsock stops servicing connections after a snapshot restore,
+    /// but the guest network survives, so a restored VM is reachable here — which
+    /// is what makes draining (and re-migrating) a restored VM possible. One
+    /// session at a time; loops to re-accept (the next host, after a move).
+    async fn serve_tcp_drain(version: GuestdVersion) {
+        use tokio::net::TcpListener;
+        let port = proto::GUEST_DRAIN_TCP_PORT;
+        loop {
+            let listener = match TcpListener::bind(("0.0.0.0", port)).await {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("guestd: tcp drain bind: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            loop {
+                let stream = match listener.accept().await {
+                    Ok((s, _)) => s,
+                    Err(_) => break, // re-bind
+                };
+                let chan = guestd::JsonLineChannel::new(stream);
+                let mut g = Guest::new(VmId::new(), version.clone(), chan);
+                if g.handshake().await.is_err() {
+                    continue;
+                }
+                while let Ok(msg) = g.channel().recv().await {
+                    if g.handle(msg, now()).await.is_err() {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -72,6 +97,9 @@ mod linux {
     async fn run() {
         let version = GuestdVersion::new(env!("CARGO_PKG_VERSION"));
         println!("guestd: listening on vsock port {DEFAULT_PORT}");
+        // Also serve the protocol over TCP on the guest network — the drain
+        // channel that survives a snapshot restore (vsock does not).
+        tokio::spawn(serve_tcp_drain(version.clone()));
         // Wrap mode if a command is declared; otherwise the host drives turns.
         match wrap_config_from_env() {
             Some((cmd, cfg)) => run_wrapped(version, cmd, cfg).await,
@@ -107,10 +135,7 @@ mod linux {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
-                Err(_) => {
-                    host_probe().await; // SPIKE: can we reach the host guest-initiated?
-                    continue; // accept timed out — re-bind a fresh listener
-                }
+                Err(_) => continue, // accept timed out — re-bind a fresh listener
             };
             // A fresh VmId per process; hostd binds the connection to it via the
             // Hello. (A real deployment passes the id in on the kernel cmdline.)
@@ -159,10 +184,7 @@ mod linux {
                     eprintln!("guestd: vsock serve: {e}");
                     continue;
                 }
-                Err(_) => {
-                    host_probe().await; // SPIKE: can we reach the host guest-initiated?
-                    continue; // accept timed out — re-bind a fresh listener
-                }
+                Err(_) => continue, // accept timed out — re-bind a fresh listener
             };
             let mut g = Guest::new(VmId::new(), version.clone(), chan);
             if let Err(e) = g.handshake().await {

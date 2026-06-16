@@ -288,40 +288,58 @@ pub enum MigrateOutcome {
 /// # Errors
 /// If the guest is unreachable, the handshake/drain fails for a reason other than
 /// busyness, or the snapshot/transfer fails. The VM is torn down on error.
+/// Handshake then drain a guest over `link` (any transport), returning whether it
+/// reached quiescence. On Busy, reopens the gate (DrainCancel) so the in-flight
+/// turn runs on. Shared by the TCP (networked) and vsock drain paths.
+async fn drain_to_quiescence<R, W>(link: &GuestLink<R, W>) -> std::io::Result<DrainState>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    link.handshake(std::collections::BTreeMap::new()).await?;
+    let state = link.drain(DRAIN_DEADLINE).await?;
+    if state == DrainState::Busy {
+        let _ = link.send(proto::HostToGuest::DrainCancel).await;
+    }
+    Ok(state)
+}
+
 pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome, MigrateError> {
-    // Pre-snapshot failures must NOT destroy the VM: it is still alive and serving
-    // here, so on any error reaching/draining the guest we hand it back intact
-    // (StoodDown) for the caller to re-register, rather than tearing it down.
-    // (A restored VM has no host-side vsock socket yet — Firecracker does not
-    // re-establish it on load — so this is exactly the path a re-migration of a
-    // restored VM hits; losing the workload there would be unacceptable.)
-    let link =
+    // Drain to quiescence over the channel that survives a restore. A networked VM
+    // is drained over the guest NETWORK (TCP) — Firecracker's vsock stops servicing
+    // connections after a snapshot restore (both directions), but the guest network
+    // does survive, so TCP is what lets a *restored* VM be drained and migrated
+    // again. A non-networked VM falls back to vsock (it can't re-migrate anyway).
+    //
+    // Pre-snapshot failures must NOT destroy the VM: it is still alive here, so on
+    // any error reaching/draining the guest we hand it back intact (StoodDown) for
+    // the caller to re-register, rather than tearing it down.
+    let drained = if let Some(net) = &vm.net {
+        let addr = format!("{}:{}", net.ip, proto::GUEST_DRAIN_TCP_PORT);
+        match GuestLink::connect_tcp_retry(&addr, secs(20)).await {
+            Ok(link) => drain_to_quiescence(&link).await,
+            Err(e) => {
+                eprintln!("hostd: migrate: connect guest tcp {addr}: {e} — standing down, VM kept");
+                return Ok(MigrateOutcome::StoodDown(vm));
+            }
+        }
+    } else {
         match GuestLink::connect_retry(&vm.vsock_uds, proto::GUEST_VSOCK_PORT, secs(20)).await {
-            Ok(link) => link,
+            Ok(link) => drain_to_quiescence(&link).await,
             Err(e) => {
                 eprintln!("hostd: migrate: connect guest vsock: {e} — standing down, VM kept");
                 return Ok(MigrateOutcome::StoodDown(vm));
             }
-        };
-    if let Err(e) = link.handshake(std::collections::BTreeMap::new()).await {
-        eprintln!("hostd: migrate: guest handshake: {e} — standing down, VM kept");
-        return Ok(MigrateOutcome::StoodDown(vm));
-    }
-    match link.drain(DRAIN_DEADLINE).await {
-        Ok(DrainState::Quiescent) => {}
-        Ok(DrainState::Busy) => {
-            // Reopen the gate so the in-flight turn (and any queued behind it) run
-            // on, then hand the VM back to be re-registered on this host.
-            let _ = link.send(proto::HostToGuest::DrainCancel).await;
-            drop(link);
-            return Ok(MigrateOutcome::StoodDown(vm));
         }
+    };
+    match drained {
+        Ok(DrainState::Quiescent) => {}
+        Ok(DrainState::Busy) => return Ok(MigrateOutcome::StoodDown(vm)),
         Err(e) => {
             eprintln!("hostd: migrate: drain guest: {e} — standing down, VM kept");
             return Ok(MigrateOutcome::StoodDown(vm));
         }
     }
-    drop(link);
 
     // A networked VM carries its identity (tap/MAC/IP) alongside the snapshot so
     // the target can re-create the same tap before restoring — the guest keeps its
@@ -491,10 +509,9 @@ async fn receive_and_restore(
         }
     }
 
-    // The source's vsock uds path, carried over for re-migration. Firecracker DOES
-    // re-create this host socket on load — but it does not deliver host->guest
-    // connections to the restored guest, so draining a restored VM needs a
-    // guest-INITIATED reconnect instead (see the spike below).
+    // The source's vsock uds path, carried over for completeness. Note vsock is
+    // unusable after a restore (Firecracker stops servicing it), so a restored VM
+    // is drained over TCP (the guest network) instead — see `migrate_running`.
     let vsock_uds = {
         let p = work.join("vsock.txt");
         if p.exists() {
@@ -505,35 +522,6 @@ async fn receive_and_restore(
             PathBuf::new()
         }
     };
-
-    // SPIKE: host->guest vsock is dead after restore; does guest->host work? FC
-    // routes a guest connect to host port P to the unix socket "<uds>_P". Listen
-    // there briefly and log whether the restored guest dials in (it probes every
-    // few seconds). If yes, that's the channel to drive a re-migration's drain.
-    if !vsock_uds.as_os_str().is_empty() {
-        let mux = PathBuf::from(format!("{}_5253", vsock_uds.display()));
-        let _ = std::fs::remove_file(&mux);
-        match tokio::net::UnixListener::bind(&mux) {
-            Ok(listener) => {
-                tokio::spawn(async move {
-                    use tokio::io::AsyncReadExt;
-                    match tokio::time::timeout(secs(25), listener.accept()).await {
-                        Ok(Ok((mut s, _))) => {
-                            let mut buf = [0u8; 64];
-                            let n = s.read(&mut buf).await.unwrap_or(0);
-                            eprintln!(
-                                "hostd: SPIKE guest->host vsock OK post-restore: {:?}",
-                                String::from_utf8_lossy(&buf[..n])
-                            );
-                        }
-                        _ => eprintln!("hostd: SPIKE guest->host vsock NOT received in 25s"),
-                    }
-                    let _ = std::fs::remove_file(&mux);
-                });
-            }
-            Err(e) => eprintln!("hostd: SPIKE bind {}: {e}", mux.display()),
-        }
-    }
 
     let mib = mem_mib(&work.join("mem.snap"));
     Ok(RunningVm {
