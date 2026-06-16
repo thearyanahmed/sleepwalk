@@ -9,7 +9,7 @@ source "$(dirname "$0")/ensure-env.sh"
 
 echo "hammering http://$A:$APP_PORT/inc — counter from VM RAM (Ctrl-C to stop)"
 while true; do
-    curl -s -m2 -X POST "http://$A:$APP_PORT/inc" || printf '(no response — migrating?)'
-    echo
+    resp=$(curl -s -m2 -X POST "http://$A:$APP_PORT/inc") || resp='(no response — migrating?)'
+    printf '[%s] %s\n' "$(date +%H:%M:%S)" "$resp"
     sleep 0.3
 done
