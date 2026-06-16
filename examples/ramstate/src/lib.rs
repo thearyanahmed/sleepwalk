@@ -49,11 +49,22 @@ pub fn handle(state: &State, method: &str, path: &str) -> (u16, String) {
         ("POST", "/inc") => {
             let n = state.counter.fetch_add(1, Ordering::Relaxed) + 1;
             push_log(state, format!("inc -> {n}"));
-            (200, state_json(state))
+            (200, compact_json(state)) // just the new value, not the whole log
         }
         ("GET", "/state" | "/") => (200, state_json(state)),
         _ => (404, "{\"error\":\"not found\"}".to_owned()),
     }
+}
+
+/// A compact one-line view: boot id + counter, no log. The `/inc` response, so a
+/// tight client loop isn't flooded with the recent-entries list.
+#[must_use]
+pub fn compact_json(state: &State) -> String {
+    format!(
+        "{{\"boot_id\":{},\"counter\":{}}}",
+        state.boot_id,
+        state.counter.load(Ordering::Relaxed)
+    )
 }
 
 /// Append to the log, keeping only the most recent entries (bounded memory).
@@ -109,14 +120,20 @@ mod tests {
     #[test]
     fn inc_advances_counter_and_state_reflects_it() {
         let s = State::new(42);
-        let (code, _) = handle(&s, "POST", "/inc");
+        let (code, inc_body) = handle(&s, "POST", "/inc");
         assert_eq!(code, 200);
+        // /inc is compact: counter + boot, but NOT the recent log.
+        assert!(inc_body.contains("\"counter\":1"), "{inc_body}");
+        assert!(inc_body.contains("\"boot_id\":42"), "{inc_body}");
+        assert!(
+            !inc_body.contains("recent"),
+            "/inc must be compact: {inc_body}"
+        );
+        // /state carries the full view including the recent log.
         let (code, body) = handle(&s, "GET", "/state");
         assert_eq!(code, 200);
         assert!(body.contains("\"counter\":1"), "{body}");
-        assert!(body.contains("\"boot_id\":42"), "{body}");
-        // requests counts every handled call: the inc plus this state read.
-        assert!(body.contains("\"requests\":2"), "{body}");
+        assert!(body.contains("\"recent\":[\"inc -> 1\"]"), "{body}");
     }
 
     #[test]
