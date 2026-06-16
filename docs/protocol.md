@@ -45,6 +45,14 @@ the host listens on a fixed port. One JSON object per line, UTF-8. Messages are
 **internally tagged**: every message is a flat object with a `type` field naming
 the message, plus that message's fields. A fieldless message is just `{"type":"<Name>"}`.
 
+**Two channels, same messages.** guestd serves the protocol on **both** vsock and
+a **TCP port on the guest network** (`GUEST_DRAIN_TCP_PORT`). vsock is the boot/turn
+path; the TCP channel exists because **Firecracker's vsock device stops servicing
+connections after a snapshot restore** (both directions), while the guest network
+survives. So hostd drains a *restored* VM over TCP — which is what makes draining,
+and therefore **re-migrating** (moving an already-migrated VM again), possible.
+A networked VM is drained over TCP; a non-networked VM uses vsock and is one-way.
+
 ```
 {"type":"Hello","vm_id":"7e57...","guestd_version":"0.1.0"}
 {"type":"TurnStarted","turn_id":7,"ts":1700000000000000000}
