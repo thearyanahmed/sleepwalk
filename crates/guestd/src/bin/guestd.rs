@@ -82,11 +82,12 @@ mod linux {
     /// session at a time; loop so the target host can reconnect after a move.
     async fn run_host_driven(version: GuestdVersion) {
         loop {
-            // Bind+accept with a timeout so a listener gone stale across a
-            // snapshot/restore (its accept never fires on the new host) is dropped
-            // and re-bound. Without this a restored VM can never be reconnected to,
-            // so it can't be drained for a re-migration — the "terminal restored
-            // VM" limitation.
+            // Bind+accept with a timeout so a listener that went stale is dropped
+            // and re-bound rather than blocking forever. (Note: this does NOT by
+            // itself make a *restored* VM reconnectable — Firecracker's virtio-vsock
+            // does not deliver host->guest connections to a guest after snapshot
+            // restore, so a restored VM still can't be drained/re-migrated over the
+            // host-initiated channel; that needs a guest-initiated reconnect.)
             let chan = match tokio::time::timeout(Duration::from_secs(5), serve(DEFAULT_PORT)).await
             {
                 Ok(Ok(c)) => c,
@@ -130,11 +131,12 @@ mod linux {
         let mut child_done = false;
         let mut first_connection = true;
         loop {
-            // Bind+accept with a timeout so a listener gone stale across a
-            // snapshot/restore (its accept never fires on the new host) is dropped
-            // and re-bound. Without this a restored VM can never be reconnected to,
-            // so it can't be drained for a re-migration — the "terminal restored
-            // VM" limitation.
+            // Bind+accept with a timeout so a listener that went stale is dropped
+            // and re-bound rather than blocking forever. (Note: this does NOT by
+            // itself make a *restored* VM reconnectable — Firecracker's virtio-vsock
+            // does not deliver host->guest connections to a guest after snapshot
+            // restore, so a restored VM still can't be drained/re-migrated over the
+            // host-initiated channel; that needs a guest-initiated reconnect.)
             let chan = match tokio::time::timeout(Duration::from_secs(5), serve(DEFAULT_PORT)).await
             {
                 Ok(Ok(c)) => c,
