@@ -225,8 +225,12 @@ affected. A production driver (GARP + a clean per-run target) removes that noise
 
 **Cons / trade-offs**
 - **Not true live migration** — there is a real pause (the snapshot is
-  stop-the-world). Freeze is ~1.4 s source cost / a few seconds perceived for a
-  256 MB guest over public internet — **not** sub-100 ms (yet).
+  stop-the-world), ~1.4 s source cost for a 256 MB guest over public internet.
+  But the pause lands **only in the idle gaps between turns** (quiescence-gated),
+  so it never interrupts a running turn. The design target is "**freeze fits the
+  gap**," not "sub-100 ms freeze" — a turn racing the freeze sees a bounded
+  start-delay, never a cut. Driving the freeze lower (diff snapshots, tmpfs,
+  post-copy) widens the gaps it fits in; it isn't a correctness requirement.
 - The pause + transfer scale with **guest RAM, not workload size**: a tiny app in
   a 256 MB VM still ships 256 MB. Diff snapshots are the fix.
 - Snapshots are **CPU-compatibility-bound** (same vendor/model, TSC within ~250
