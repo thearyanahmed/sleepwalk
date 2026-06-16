@@ -145,16 +145,34 @@ Conditions: two DigitalOcean droplets, **2 vCPU** each, Firecracker v1.16.0,
 kernel 6.8, 256 MB guest, snapshot on disk-backed `/tmp`, streamed over the
 **public internet**, 20 runs. Source-side only (excludes target restore/resume).
 
-**End-to-end continuity (the headline).** A stateful in-RAM HTTP app (the
-[`ramstate`](examples/ramstate) example — a counter living only in process
-memory) was hit in a tight loop from a laptop, through a host port (DNAT), *while*
-the VM migrated. The counter **continued across the move with the same process
-boot id — zero state loss** — with a single **~4.7 s** client-visible blip. That
-blip is the *whole* picture (snapshot + 256 MB transfer + UFFD restore + VXLAN
-FDB relearn + ~2 s client-timeout granularity), not the source cost above. The
-freeze is dominated by shipping the entire 256 MB of guest RAM regardless of how
-little the app uses; diff snapshots, smaller guest RAM, GARP-on-resume, and a
-private link are the levers (see Limitations / Roadmap).
+**End-to-end continuity & user-perceived downtime (the headline).** A stateful
+in-RAM HTTP app (the [`ramstate`](examples/ramstate) example — a counter living
+only in process memory) was hit in a tight loop from a laptop, through a host port
+(DNAT), *while* the VM migrated A→B, and the client-visible gap (last good
+response before → first good response after) was measured across repeated runs.
+**Every run that completed kept the same process `boot_id` and a monotonic
+counter — zero state loss.**
+
+| user-perceived downtime (continuity-preserved runs) | value |
+|-----------------------------------------------------|------:|
+| min                                                 | 0.17 s |
+| median                                              | 2.40 s |
+| mean                                                | 2.23 s |
+| max                                                 | 7.93 s |
+
+The gap is **bimodal**: **~0.17 s** when the VXLAN forwarding table is already
+warm, **~3.8 s** on a cold FDB/ARP relearn (one 7.9 s outlier). The *freeze*
+itself — snapshot (~435 ms) + 256 MB transfer (~989 ms) ≈ **1.4 s** — is only
+part of it; the rest is **overlay relearn**, which a GARP-on-resume would both
+shrink and stabilise. The freeze scales with **guest RAM, not app size** (the
+whole 256 MB ships regardless of the ~1 KB the counter uses); diff snapshots,
+smaller RAM, and a private link are the other levers (see Limitations).
+
+*Methodology note: of 20 runs, 14 produced a clean continuity measurement; 6 hit
+test-harness artifacts (intermittent ssh stalls in the driver + a duplicate-IP
+collision from leftover VM state during a stall) — the migrations' snapshot +
+transfer still succeeded each time, only the client's post-move reachability was
+affected. A production driver (GARP + a clean per-run target) removes that noise.*
 
 ## Limitations
 
