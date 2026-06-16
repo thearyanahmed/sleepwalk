@@ -321,6 +321,21 @@ pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome
     // the target can re-create the same tap before restoring — the guest keeps its
     // MAC/IP on the new host, and a client's connection follows it.
     let mut extra = Vec::new();
+    // The guest's vsock uds path travels with the snapshot too: Firecracker
+    // re-binds that path on the target at load, so handing it over lets the target
+    // reconnect and drain the guest for a *subsequent* migration. Without it a
+    // restored VM has no path to its guest and is terminal (can't be moved again).
+    {
+        let vpath = vm.work.join("vsock.txt");
+        if let Err(e) = std::fs::write(&vpath, vm.vsock_uds.to_string_lossy().as_bytes()) {
+            vm.teardown();
+            return Err(io("write vsock path", e));
+        }
+        extra.push(OutboundFile {
+            name: "vsock.txt".to_owned(),
+            path: vpath,
+        });
+    }
     if let Some(net) = &vm.net {
         let path = vm.work.join("net.json");
         match serde_json::to_vec(net) {
@@ -392,10 +407,10 @@ async fn receive_and_restore(
     std::fs::create_dir_all(&work).map_err(|e| io("create work dir", e))?;
 
     let files = recv_snapshot(listener, &work).await?;
-    // mem.snap + state.snap, plus an optional net.json for a networked VM.
-    if files.len() != 2 && files.len() != 3 {
+    // mem.snap + state.snap, plus optional metadata files (vsock.txt, net.json).
+    if !(2..=4).contains(&files.len()) {
         return Err(MigrateError::Snapshot(format!(
-            "expected 2 or 3 files, got {}",
+            "expected 2..4 files, got {}",
             files.len()
         )));
     }
@@ -468,15 +483,27 @@ async fn receive_and_restore(
         }
     }
 
+    // The guest's vsock uds path (the source's, which Firecracker re-bound here on
+    // load) — recorded so this VM can be drained and migrated again. Absent only
+    // for the legacy/benchmark sender that doesn't ship it; then it's terminal.
+    let vsock_uds = {
+        let p = work.join("vsock.txt");
+        if p.exists() {
+            std::fs::read_to_string(&p)
+                .map(|s| PathBuf::from(s.trim()))
+                .unwrap_or_default()
+        } else {
+            PathBuf::new()
+        }
+    };
+
     let mib = mem_mib(&work.join("mem.snap"));
     Ok(RunningVm {
         id: proto::VmId::new(),
         proc,
         fc,
         work,
-        // The restored VM's vsock socket path lives in the snapshot, not chosen
-        // here, so it is not re-migratable yet — terminal on this host for now.
-        vsock_uds: PathBuf::new(),
+        vsock_uds,
         mib,
         uffd: Some(UffdState {
             stop,
