@@ -19,9 +19,22 @@ fi
 [[ -n "$vm" ]] || _die "no demo VM at $GUEST_IP on A or B — run ./scripts/prepare.sh"
 
 _log "migrating $vm  $dir"
-curl -s -m10 -X POST "http://$dst:8080/migrate/recv?listen=0.0.0.0:$DATA_PORT" >/dev/null
+# 1) target opens the receiver and starts listening.
+recv=$(curl -s -m10 -X POST "http://$dst:8080/migrate/recv?listen=0.0.0.0:$DATA_PORT")
+if [[ "$recv" != "receiving" ]]; then
+    _die "receiver on $dst not ready: ${recv:-<no response>}"
+fi
+# 2) source drains, snapshots, streams. Success returns the timing JSON.
 resp=$(curl -s -m90 -X POST "http://$src:8080/migrate/send?vm=$vm&to=$dst:$DATA_PORT")
-echo "$resp"
-echo
-_log "done — the same counter continues via http://$A:$APP_PORT"
+case "$resp" in
+    *snapshot_ms*) echo "$resp" ;;
+    *) _die "migration failed: ${resp:-<no response>}" ;;
+esac
+# 3) verify the VM actually landed on the target.
+sleep 2
+if [[ -n "$(vm_at_guest_ip "http://$dst:8080")" ]]; then
+    _log "done — VM is now on ${dst} (was ${dir%-*}); the same counter continues via http://$A:$APP_PORT"
+else
+    _warn "send returned ok but the VM was not found on the target — check daemon logs"
+fi
 _log "run ./scripts/migrate.sh again to move it back, or ./scripts/prepare.sh for a fresh VM"

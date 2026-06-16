@@ -28,10 +28,13 @@ sh_host() { local label="$1"; shift; timeout 45 "$HOST" "$label" ssh "$@" 2>/dev
 
 # id of the live demo VM (the one at GUEST_IP) on daemon $1 (a base URL), else
 # empty — discovered from metrics, so no temp file and it survives reboots.
+# The trailing `|| true` is load-bearing: grep exits non-zero when the VM is not
+# on this host, and `set -e` would otherwise kill the caller before it can try
+# the other host.
 vm_at_guest_ip() {
     curl -s -m5 "$1/metrics" 2>/dev/null \
         | grep "ip=\"$GUEST_IP\".*} 1" \
-        | grep -oE 'vm_id="[^"]+"' | head -1 | sed 's/vm_id="//;s/"//'
+        | grep -oE 'vm_id="[^"]+"' | head -1 | sed 's/vm_id="//;s/"//' || true
 }
 
 # When executed directly (not sourced) just report the env is good.
