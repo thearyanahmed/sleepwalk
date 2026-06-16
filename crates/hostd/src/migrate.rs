@@ -289,17 +289,23 @@ pub enum MigrateOutcome {
 /// If the guest is unreachable, the handshake/drain fails for a reason other than
 /// busyness, or the snapshot/transfer fails. The VM is torn down on error.
 pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome, MigrateError> {
+    // Pre-snapshot failures must NOT destroy the VM: it is still alive and serving
+    // here, so on any error reaching/draining the guest we hand it back intact
+    // (StoodDown) for the caller to re-register, rather than tearing it down.
+    // (A restored VM has no host-side vsock socket yet — Firecracker does not
+    // re-establish it on load — so this is exactly the path a re-migration of a
+    // restored VM hits; losing the workload there would be unacceptable.)
     let link =
         match GuestLink::connect_retry(&vm.vsock_uds, proto::GUEST_VSOCK_PORT, secs(20)).await {
             Ok(link) => link,
             Err(e) => {
-                vm.teardown();
-                return Err(io("connect guest vsock", e));
+                eprintln!("hostd: migrate: connect guest vsock: {e} — standing down, VM kept");
+                return Ok(MigrateOutcome::StoodDown(vm));
             }
         };
     if let Err(e) = link.handshake(std::collections::BTreeMap::new()).await {
-        vm.teardown();
-        return Err(io("guest handshake", e));
+        eprintln!("hostd: migrate: guest handshake: {e} — standing down, VM kept");
+        return Ok(MigrateOutcome::StoodDown(vm));
     }
     match link.drain(DRAIN_DEADLINE).await {
         Ok(DrainState::Quiescent) => {}
@@ -311,8 +317,8 @@ pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome
             return Ok(MigrateOutcome::StoodDown(vm));
         }
         Err(e) => {
-            vm.teardown();
-            return Err(io("drain guest", e));
+            eprintln!("hostd: migrate: drain guest: {e} — standing down, VM kept");
+            return Ok(MigrateOutcome::StoodDown(vm));
         }
     }
     drop(link);
@@ -321,10 +327,12 @@ pub async fn migrate_running(vm: RunningVm, addr: &str) -> Result<MigrateOutcome
     // the target can re-create the same tap before restoring — the guest keeps its
     // MAC/IP on the new host, and a client's connection follows it.
     let mut extra = Vec::new();
-    // The guest's vsock uds path travels with the snapshot too: Firecracker
-    // re-binds that path on the target at load, so handing it over lets the target
-    // reconnect and drain the guest for a *subsequent* migration. Without it a
-    // restored VM has no path to its guest and is terminal (can't be moved again).
+    // The guest's vsock uds path travels with the snapshot — groundwork for
+    // re-migrating a restored VM. NOTE: this alone is not sufficient: Firecracker
+    // does NOT re-create the host-side vsock socket on snapshot load, so the
+    // target must additionally re-establish the vsock device before a restored VM
+    // can be drained and moved again (the outstanding "terminal restored VM"
+    // limitation). The path is carried so that fix has what it needs.
     {
         let vpath = vm.work.join("vsock.txt");
         if let Err(e) = std::fs::write(&vpath, vm.vsock_uds.to_string_lossy().as_bytes()) {
@@ -483,9 +491,10 @@ async fn receive_and_restore(
         }
     }
 
-    // The guest's vsock uds path (the source's, which Firecracker re-bound here on
-    // load) — recorded so this VM can be drained and migrated again. Absent only
-    // for the legacy/benchmark sender that doesn't ship it; then it's terminal.
+    // The source's vsock uds path, carried over as groundwork for re-migration.
+    // It is recorded on the restored VM, but Firecracker does not re-create the
+    // host socket on load, so draining a restored VM still needs the vsock device
+    // re-established first — until then a restored VM remains terminal.
     let vsock_uds = {
         let p = work.join("vsock.txt");
         if p.exists() {
