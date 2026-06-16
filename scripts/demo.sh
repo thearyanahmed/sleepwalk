@@ -29,13 +29,20 @@ A="${REMOTE_A_HOST:?set REMOTE_A_HOST in .env}"
 B="${REMOTE_B_HOST:?set REMOTE_B_HOST in .env}"
 
 HOST="$SLEEPWALK_ROOT/scripts/host.sh"
-GUEST_IP=10.200.0.2   # first VM after a daemon reset lands here
+GUEST_IP=10.200.0.2   # the demo VM's address (first VM after a daemon reset)
 APP_PORT=18080        # public host port DNAT'd to the guest's :8000
 DATA_PORT=9000        # migration transfer port
-VM_FILE=/tmp/sw-demo-vm
 
 # ssh to a host with a timeout so a flaky link can't wedge the driver.
 sh_host() { local label="$1"; shift; timeout 45 "$HOST" "$label" ssh "$@" 2>/dev/null; }
+
+# The id of the live demo VM (the one at GUEST_IP) on `host_url`, discovered from
+# its metrics — no temp file, so it survives reboots and re-runs. Empty if none.
+vm_at_guest_ip() { # host_url
+    curl -s -m5 "$1/metrics" 2>/dev/null \
+        | grep "ip=\"$GUEST_IP\".*} 1" \
+        | grep -oE 'vm_id="[^"]+"' | head -1 | sed 's/vm_id="//;s/"//'
+}
 
 reset_daemon() { # label host_id
     sh_host "$1" "pkill -x hostd 2>/dev/null; sleep 2; sudo pkill -9 -f '[f]irecracker' 2>/dev/null; sleep 1; for t in \$(ip -o link show|grep -oE 'sw-tap[0-9]+'|sort -u); do sudo ip link del \$t 2>/dev/null; done; rm -rf /tmp/sleepwalk-vm-* 2>/dev/null; cd sleepwalk && setsid nohup target/release/hostd daemon 0.0.0.0:8080 $2 >/tmp/hostd.log 2>&1 </dev/null & sleep 2; true" >/dev/null || true
@@ -65,7 +72,6 @@ cmd_up() {
     local vm
     vm=$(curl -s -m45 -X POST "http://$A:8080/vms/spawn?mib=256&net=1" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("vm",""))' 2>/dev/null)
     [[ -n "$vm" ]] || _die "spawn failed"
-    echo "$vm" >"$VM_FILE"
     _log "vm $vm — waiting for the app to answer on http://$A:$APP_PORT"
     local i
     for i in $(seq 1 20); do
@@ -91,24 +97,40 @@ cmd_watch() {
 }
 
 cmd_migrate() {
-    [[ -f "$VM_FILE" ]] || _die "no VM recorded — run 'demo.sh up' first"
-    local vm
-    vm=$(cat "$VM_FILE")
-    _log "migrating $vm  A -> B"
-    curl -s -m10 -X POST "http://$B:8080/migrate/recv?listen=0.0.0.0:$DATA_PORT" >/dev/null
+    # Discover the demo VM (the one at GUEST_IP) on whichever host holds it.
+    local vm src dst
+    vm=$(vm_at_guest_ip "http://$A:8080"); src="$A"; dst="$B"
+    if [[ -z "$vm" ]]; then
+        vm=$(vm_at_guest_ip "http://$B:8080"); src="$B"; dst="$A"
+    fi
+    [[ -n "$vm" ]] || _die "no demo VM found at $GUEST_IP on A or B — run 'demo.sh up'"
+    local dir="A->B"; [[ "$src" == "$B" ]] && dir="B->A"
+    _log "migrating $vm  $dir"
+    # 1) recv on the TARGET: it binds DATA_PORT and waits to receive the snapshot
+    #    (returns once listening; the restore runs in the background).
+    curl -s -m10 -X POST "http://$dst:8080/migrate/recv?listen=0.0.0.0:$DATA_PORT" >/dev/null
+    # 2) send on the SOURCE: drain to quiescence, snapshot, stream to the target.
+    #    On success the source tears its copy down — the VM now lives on the target.
     local resp
-    resp=$(curl -s -m90 -X POST "http://$A:8080/migrate/send?vm=$vm&to=$B:$DATA_PORT")
+    resp=$(curl -s -m90 -X POST "http://$src:8080/migrate/send?vm=$vm&to=$dst:$DATA_PORT")
     echo "$resp"
     echo
-    _log "done — VM now on B; the same counter continues via http://$A:$APP_PORT"
-    _log "run 'demo.sh up' to reset for another A -> B run"
+    _log "done — VM now on the other host; the same counter continues via http://$A:$APP_PORT"
+    _log "migrate again to move it back, or 'demo.sh up' for a fresh VM"
 }
 
-cmd_state() { curl -s -m6 "http://$A:$APP_PORT/state"; echo; }
+cmd_state() {
+    echo "app /state via A ($A):"; curl -s -m6 "http://$A:$APP_PORT/state"; echo
+    echo "app /state via B ($B):"; curl -s -m6 "http://$B:$APP_PORT/state"; echo
+}
 
 cmd_status() {
-    echo -n "A: "; curl -s -m5 "http://$A:8080/status" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["vms"]),"vm(s)")' 2>/dev/null || echo unreachable
-    echo -n "B: "; curl -s -m5 "http://$B:8080/status" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d["vms"]),"vm(s)")' 2>/dev/null || echo unreachable
+    local fmt='import sys,json;d=json.load(sys.stdin);print(len(d["vms"]),"vm(s); pressure",round(d["pressure"],3),"; tsc",d["compat"]["tsc_khz"])'
+    echo -n "A daemon: "; curl -s -m5 "http://$A:8080/status" | python3 -c "$fmt" 2>/dev/null || echo unreachable
+    echo -n "B daemon: "; curl -s -m5 "http://$B:8080/status" | python3 -c "$fmt" 2>/dev/null || echo unreachable
+    if [[ -n "$(vm_at_guest_ip "http://$A:8080")" ]]; then echo "demo VM ($GUEST_IP): on A"
+    elif [[ -n "$(vm_at_guest_ip "http://$B:8080")" ]]; then echo "demo VM ($GUEST_IP): on B"
+    else echo "demo VM ($GUEST_IP): not found (run 'demo.sh up')"; fi
 }
 
 case "${1:-}" in
