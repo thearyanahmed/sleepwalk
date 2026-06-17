@@ -169,6 +169,9 @@ prepare:
     scripts/prepare.sh
 long-process:
     scripts/long-process.sh
+# Bursty client: turns of load with random 3-10s idle gaps — migrate during a gap.
+long-process-bursty:
+    scripts/long-process-bursty.sh
 migrate:
     scripts/migrate.sh
 demo-status:
