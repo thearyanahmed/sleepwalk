@@ -291,7 +291,9 @@ fn vm_ip(net: &Option<crate::net::NetId>) -> &str {
 /// image or the kernel cmdline (both host-readable). Absent key ⇒ no boot
 /// handshake, so the synthetic profile is untouched.
 fn boot_secrets() -> Option<BTreeMap<String, String>> {
-    let key = std::env::var("AGENT_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let key = std::env::var("AGENT_API_KEY")
+        .ok()
+        .filter(|k| !k.is_empty())?;
     let mut env = BTreeMap::new();
     env.insert("AGENT_API_KEY".to_owned(), key);
     for k in ["AGENT_MODEL", "AGENT_GAP_SECS"] {

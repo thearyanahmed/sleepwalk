@@ -338,7 +338,10 @@ mod linux {
     /// the handshake `Secrets` for the await-secrets profile (spawned after the
     /// first handshake so a coding agent gets its API key at exec). Secrets stay in
     /// memory only — never the rootfs image, never the kernel cmdline.
-    fn spawn_child(cmd: &str, env: &BTreeMap<String, String>) -> std::io::Result<(Child, ChildLines)> {
+    fn spawn_child(
+        cmd: &str,
+        env: &BTreeMap<String, String>,
+    ) -> std::io::Result<(Child, ChildLines)> {
         let mut argv = cmd.split_whitespace();
         let program = argv
             .next()
