@@ -54,7 +54,7 @@ the script-level expression of the [race rule](../quiescence/race-rule.md).
 
 - The agent edits files and runs tests per turn against a free model endpoint.
 - An A→B migration during an idle gap; turns continue on the new host, **including a
-  model call after restore** — the [clock fix-up](../reference/glossary.md) holds.
+  model call after restore** — the [clock fix-up](../migration/clock-fixup.md) holds.
 - A migration fired *mid-turn* **stands down** and keeps the VM alive (the race rule).
 - The in-process turn counter carries across the move — state preserved.
 

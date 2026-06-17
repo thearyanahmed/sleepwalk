@@ -32,7 +32,7 @@ Acronyms and terms, full form first.
 | **TSC** | Time Stamp Counter — a CPU register counting cycles; the guest's timebase. A frequency mismatch across hosts breaks restore — see [ADR-004](../security/cpu-tsc.md). |
 | **CPUID** | The x86 instruction enumerating CPU features; latched by the guest at boot, which is why CPU templates must be applied before snapshot. |
 | **compatibility class** | `(cpu_vendor, cpu_model, tsc_khz, kernel tier)`; the rebalancer only migrates within one. See [ADR-004](../security/cpu-tsc.md). |
-| **clock fix-up** | Resyncing the guest clock on `Resumed`, because the guest clock froze at snapshot time; without it TLS/token-expiry logic can misbehave. |
+| **clock fix-up** | Resyncing the guest clock on `Resumed`, because the guest clock froze at snapshot time; without it TLS/token-expiry logic can misbehave. See [Post-restore clock fix-up](../migration/clock-fixup.md). |
 | **coordinated omission** | A load-test measurement bug where a closed-loop generator stops sending during a stall and hides the latency spike. The [harness](../architecture/crates.md#harness) is open-loop to avoid it. |
 | **TCG** | Tiny Code Generator — QEMU's pure-software CPU emulator, used on the M1/M2 dev path. Correct but ~10–30× slow; never benchmark-valid. |
 | **ADR** | Architecture Decision Record — a short doc capturing one decision, its context, and consequences (see `docs/adr/`). |

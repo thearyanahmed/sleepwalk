@@ -14,12 +14,17 @@
 - [The crates](architecture/crates.md)
 - [Data flow](architecture/data-flow.md)
 
+# Fleet rebalancing
+
+- [Overview & a worked example](rebalancing/overview.md)
+
 # The migration pipeline
 
 - [Overview & the state machine](migration/overview.md)
 - [Source side](migration/source.md)
 - [Target side & UFFD lazy restore](migration/target-uffd.md)
 - [Snapshot transfer](migration/transfer.md)
+- [Post-restore clock fix-up](migration/clock-fixup.md)
 
 # Quiescence & the race rule
 
