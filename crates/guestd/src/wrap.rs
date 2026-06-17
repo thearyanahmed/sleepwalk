@@ -16,7 +16,10 @@
 //! turns, replay after resume) is the native-mode path, where the workload
 //! speaks the protocol itself.
 
-use proto::Timestamp;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use proto::{Timestamp, TurnId};
 
 use crate::channel::GuestChannel;
 use crate::guest::{Guest, GuestError};
@@ -87,6 +90,56 @@ pub async fn apply_signal<C: GuestChannel>(
                 return Ok(()); // no turn open; ignore the stray close
             }
             guest.end_turn(now).await
+        }
+    }
+}
+
+/// Turn state shared between the continuous child-stdout reader (which updates it
+/// from inferred boundaries) and the drain responders on each host connection —
+/// both the vsock loop and the TCP drain channel. This is what lets a *passive*
+/// wrap-mode guest answer "am I mid-turn right now?" correctly even when no host
+/// is currently connected: the reader runs continuously, so when a drain arrives
+/// (over either transport) the `DrainAck` reflects the live turn state and a
+/// migration is never allowed to snapshot mid-turn.
+///
+/// Cheap to clone (an `Arc`); clones share one state.
+#[derive(Clone, Default)]
+pub struct TurnTracker(Arc<TrackerInner>);
+
+#[derive(Default)]
+struct TrackerInner {
+    in_turn: AtomicBool,
+    last_id: AtomicU64,
+}
+
+impl TurnTracker {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Update from an inferred boundary. Lenient like [`apply_signal`]: a
+    /// duplicate open or a stray close just sets the flag and is otherwise
+    /// ignored (the child is untrusted output, not a protocol peer). The turn id
+    /// advances only on a genuine open.
+    pub fn apply(&self, signal: TurnSignal) {
+        match signal {
+            TurnSignal::Start => {
+                if !self.0.in_turn.swap(true, Ordering::Relaxed) {
+                    self.0.last_id.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            TurnSignal::End => self.0.in_turn.store(false, Ordering::Relaxed),
+        }
+    }
+
+    /// The in-flight turn id, or `None` between turns — the `DrainAck` payload.
+    #[must_use]
+    pub fn in_flight(&self) -> Option<TurnId> {
+        if self.0.in_turn.load(Ordering::Relaxed) {
+            Some(TurnId::from_u64(self.0.last_id.load(Ordering::Relaxed)))
+        } else {
+            None
         }
     }
 }
@@ -205,5 +258,46 @@ mod tests {
             g.channel().sent().last(),
             Some(GuestToHost::TurnStarted { .. })
         ));
+    }
+
+    #[test]
+    fn tracker_starts_quiescent() {
+        assert_eq!(TurnTracker::new().in_flight(), None);
+    }
+
+    #[test]
+    fn tracker_tracks_open_and_close() {
+        let t = TurnTracker::new();
+        t.apply(TurnSignal::Start);
+        assert!(t.in_flight().is_some(), "in a turn after start");
+        t.apply(TurnSignal::End);
+        assert_eq!(t.in_flight(), None, "between turns after end");
+    }
+
+    #[test]
+    fn tracker_id_advances_only_on_genuine_open() {
+        let t = TurnTracker::new();
+        t.apply(TurnSignal::Start);
+        let first = t.in_flight();
+        t.apply(TurnSignal::Start); // duplicate open — ignored
+        assert_eq!(t.in_flight(), first, "duplicate start does not bump the id");
+        t.apply(TurnSignal::End);
+        t.apply(TurnSignal::Start); // next genuine turn
+        assert_ne!(t.in_flight(), first, "a new turn gets a new id");
+    }
+
+    #[test]
+    fn tracker_ignores_stray_close() {
+        let t = TurnTracker::new();
+        t.apply(TurnSignal::End);
+        assert_eq!(t.in_flight(), None);
+    }
+
+    #[test]
+    fn tracker_clone_shares_state() {
+        let a = TurnTracker::new();
+        let b = a.clone();
+        a.apply(TurnSignal::Start);
+        assert!(b.in_flight().is_some(), "clone observes the same state");
     }
 }

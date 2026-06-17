@@ -29,8 +29,8 @@ mod linux {
     use guestd::GuestChannel;
     use guestd::guest::Guest;
     use guestd::vsock::{DEFAULT_PORT, serve};
-    use guestd::wrap::{WrapConfig, apply_signal};
-    use proto::{GuestdVersion, Timestamp, VmId};
+    use guestd::wrap::{TurnTracker, WrapConfig};
+    use proto::{GuestToHost, GuestdVersion, HostToGuest, Timestamp, VmId};
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::{Child, Command};
 
@@ -50,7 +50,7 @@ mod linux {
     /// but the guest network survives, so a restored VM is reachable here — which
     /// is what makes draining (and re-migrating) a restored VM possible. One
     /// session at a time; loops to re-accept (the next host, after a move).
-    async fn serve_tcp_drain(version: GuestdVersion) {
+    async fn serve_tcp_drain(version: GuestdVersion, tracker: TurnTracker) {
         use tokio::net::TcpListener;
         let port = proto::GUEST_DRAIN_TCP_PORT;
         loop {
@@ -72,11 +72,10 @@ mod linux {
                 if g.handshake().await.is_err() {
                     continue;
                 }
-                while let Ok(msg) = g.channel().recv().await {
-                    if g.handle(msg, now()).await.is_err() {
-                        break;
-                    }
-                }
+                // Answer drains from the shared turn tracker (the child reader keeps
+                // it live) — so a restored VM drained over TCP reports its live turn
+                // state, never "quiescent" mid-turn.
+                serve_wrap_messages(g.channel(), &tracker).await;
             }
         }
     }
@@ -98,14 +97,67 @@ mod linux {
     async fn run() {
         let version = GuestdVersion::new(env!("CARGO_PKG_VERSION"));
         println!("guestd: listening on vsock port {DEFAULT_PORT}");
+        // One turn tracker, shared by the wrap child reader (writer) and both drain
+        // responders (vsock + TCP). Empty/quiescent in host-driven mode (no child).
+        let tracker = TurnTracker::new();
         // Also serve the protocol over TCP on the guest network — the drain
         // channel that survives a snapshot restore (vsock does not).
-        tokio::spawn(serve_tcp_drain(version.clone()));
+        tokio::spawn(serve_tcp_drain(version.clone(), tracker.clone()));
         // Wrap mode if a command is declared; otherwise the host drives turns.
         match wrap_config_from_env() {
-            Some((cmd, cfg)) => run_wrapped(version, cmd, cfg, wrap_await_secrets()).await,
+            Some((cmd, cfg)) => run_wrapped(version, cmd, cfg, wrap_await_secrets(), tracker).await,
             None => run_host_driven(version).await,
         }
+    }
+
+    /// Serve a host connection in wrap mode: answer drains from the shared turn
+    /// tracker and reply to liveness pings. Wrap mode is **passive** — it does not
+    /// gate or queue turns (`DrainCancel`/`RunTurn` are no-ops) and secrets are
+    /// delivered to the child at spawn — so no `Guest` state is needed here. Returns
+    /// when the host disconnects; the caller re-accepts.
+    async fn serve_wrap_messages<C: GuestChannel>(chan: &C, tracker: &TurnTracker) {
+        while let Ok(msg) = chan.recv().await {
+            let res = match msg {
+                HostToGuest::DrainRequest { .. } => {
+                    chan.send(GuestToHost::DrainAck {
+                        in_flight: tracker.in_flight(),
+                    })
+                    .await
+                }
+                HostToGuest::Ping => chan.send(GuestToHost::Pong).await,
+                _ => Ok(()),
+            };
+            if res.is_err() {
+                break; // host gone; caller re-accepts (e.g. after a move)
+            }
+        }
+    }
+
+    /// Continuously drain the wrapped child's stdout in its own task: classify each
+    /// line into a turn boundary (updating `tracker`) or forward it to the log. This
+    /// runs for the child's whole life, independent of any host connection — so the
+    /// stdout pipe never blocks and a drain always sees live turn state. The `Child`
+    /// handle is held here to keep the process from being reaped early.
+    fn spawn_reader(child: Child, mut lines: ChildLines, cfg: WrapConfig, tracker: TurnTracker) {
+        tokio::spawn(async move {
+            let _child = child;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(l)) => match cfg.classify(&l) {
+                        Some(sig) => tracker.apply(sig),
+                        None => println!("{l}"),
+                    },
+                    Ok(None) => {
+                        println!("guestd: wrapped child closed stdout");
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("guestd: child stdout: {e}");
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Serve host messages on one connection until the host disconnects (recv
@@ -150,45 +202,44 @@ mod linux {
         }
     }
 
-    /// Wrap mode (zero-code adoption): supervise `cmd` and infer turn
-    /// boundaries from its stdout per `cfg`. The child is spawned once, after the
-    /// first handshake hands it the boot secrets as environment, and outlives
-    /// every host (re)connection — its in-RAM state is exactly what the snapshot
-    /// carries across a migration. guestd is re-created per connection (the
-    /// source host's connection dies at restore; the target host dials in fresh).
+    /// Wrap mode (zero-code adoption): supervise `cmd` and infer turn boundaries
+    /// from its stdout per `cfg`. The child is spawned once and read continuously by
+    /// a dedicated task (see [`spawn_reader`]) that keeps the shared `tracker` live;
+    /// its in-RAM state rides the snapshot across a migration. This loop only
+    /// accepts host connections over vsock and answers their drains/pings from the
+    /// tracker — child reading is decoupled from it, so the stdout pipe never blocks
+    /// and drain state stays correct even with no host connected.
+    ///
+    /// Spawn timing: immediately at boot for the synthetic profile (no secret), or
+    /// deferred until the first handshake delivers `Secrets` for the await-secrets
+    /// profile (e.g. a coding agent that needs an API key at exec).
     async fn run_wrapped(
         version: GuestdVersion,
         cmd: String,
         cfg: WrapConfig,
         await_secrets: bool,
+        tracker: TurnTracker,
     ) {
         println!("guestd: wrap mode — supervising `{cmd}`");
-        // The child is spawned exactly once and outlives every host (re)connection
-        // — its in-RAM state is what the snapshot carries across a migration. Two
-        // spawn timings:
-        //   * default: start immediately at boot (synthetic workload, no secret).
-        //   * await_secrets: defer until the first handshake delivers `Secrets`,
-        //     then spawn with them in the child's environment (e.g. a coding agent
-        //     that needs an API key at exec — see `wrap_await_secrets`).
-        let mut child: Option<(Child, ChildLines)> = None;
+        let mut spawned = false;
         if !await_secrets {
             match spawn_child(&cmd, &BTreeMap::new()) {
-                Ok(cl) => child = Some(cl),
+                Ok((child, lines)) => {
+                    spawn_reader(child, lines, cfg.clone(), tracker.clone());
+                    spawned = true;
+                }
                 Err(e) => {
                     eprintln!("guestd: spawn `{cmd}`: {e}");
                     std::process::exit(1);
                 }
             }
         }
-        let mut child_done = false;
         let mut first_connection = true;
         loop {
-            // Bind+accept with a timeout so a listener that went stale is dropped
-            // and re-bound rather than blocking forever. (Note: this does NOT by
-            // itself make a *restored* VM reconnectable — Firecracker's virtio-vsock
-            // does not deliver host->guest connections to a guest after snapshot
-            // restore, so a restored VM still can't be drained/re-migrated over the
-            // host-initiated channel; that needs a guest-initiated reconnect.)
+            // Bind+accept with a timeout so a stale listener is dropped and re-bound
+            // rather than blocking forever. (vsock does not deliver host->guest
+            // connections after a snapshot restore; a *restored* VM is drained over
+            // the TCP channel instead — see `serve_tcp_drain`.)
             let chan = match tokio::time::timeout(Duration::from_secs(5), serve(DEFAULT_PORT)).await
             {
                 Ok(Ok(c)) => c,
@@ -206,12 +257,13 @@ mod linux {
 
             if first_connection {
                 first_connection = false;
-                if await_secrets && child.is_none() {
+                if await_secrets && !spawned {
                     // Deferred spawn: the handshake just delivered `Secrets`, so
                     // start the child now with them in its environment.
                     match spawn_child(&cmd, g.secrets()) {
-                        Ok(cl) => {
-                            child = Some(cl);
+                        Ok((child, lines)) => {
+                            spawn_reader(child, lines, cfg.clone(), tracker.clone());
+                            spawned = true;
                             println!("guestd: secrets received; child started");
                         }
                         Err(e) => {
@@ -220,76 +272,18 @@ mod linux {
                         }
                     }
                 } else {
-                    println!("guestd: host connected; child already running");
+                    println!("guestd: host connected; child running");
                 }
+            } else if let Err(e) = g.resume(now()).await {
+                // A later connection means a restore on a new host: announce we are
+                // alive (the `Resumed` clock fix-up trigger).
+                eprintln!("guestd: resume: {e}");
+                continue;
             } else {
-                // A later connection means we came up on a new host after a
-                // restore: announce we are alive (the `Resumed` clock fix-up
-                // trigger); the child and its in-RAM state rode the snapshot here.
-                if let Err(e) = g.resume(now()).await {
-                    eprintln!("guestd: resume: {e}");
-                    continue;
-                }
                 println!("guestd: resumed on new host; child intact");
             }
 
-            // Once the child has closed stdout there is nothing left to infer —
-            // just keep serving host messages (PID 1 must never exit).
-            if child_done {
-                serve_messages_only(&mut g).await;
-                continue;
-            }
-
-            // Borrow the child's stdout reader for turn inference. `None` is only
-            // possible in await_secrets mode if the spawn above failed (which exits)
-            // — defensive fall-through to message-only serving keeps PID 1 alive.
-            let lines = match child.as_mut() {
-                Some((_, lines)) => lines,
-                None => {
-                    serve_messages_only(&mut g).await;
-                    continue;
-                }
-            };
-
-            loop {
-                tokio::select! {
-                    // Host message (drain, ping, secrets, …).
-                    msg = g.channel().recv() => match msg {
-                        Ok(m) => {
-                            if let Err(e) = g.handle(m, now()).await {
-                                eprintln!("guestd: handle: {e}");
-                                break;
-                            }
-                        }
-                        Err(_) => break, // host gone; reconnect (e.g. after a move)
-                    },
-                    // A line of child output: a turn boundary, or pass-through.
-                    line = lines.next_line() => match line {
-                        Ok(Some(l)) => match cfg.classify(&l) {
-                            Some(sig) => {
-                                if let Err(e) = apply_signal(&mut g, sig, now()).await {
-                                    eprintln!("guestd: turn signal: {e}");
-                                }
-                            }
-                            None => println!("{l}"), // forward ordinary output
-                        },
-                        Ok(None) => {
-                            println!("guestd: wrapped child closed stdout");
-                            child_done = true;
-                            break;
-                        }
-                        Err(e) => {
-                            eprintln!("guestd: child stdout: {e}");
-                            break;
-                        }
-                    },
-                }
-            }
-
-            // If the child finished mid-connection, serve the rest of it.
-            if child_done {
-                serve_messages_only(&mut g).await;
-            }
+            serve_wrap_messages(g.channel(), &tracker).await;
         }
     }
 
