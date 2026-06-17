@@ -82,6 +82,10 @@ hostd-daemon ADDR="0.0.0.0:8080":
 guest-rootfs:
     scripts/build-guest-rootfs.sh
 
+# Build the agent guest rootfs (Ubuntu + aider, guestd as init). Linux, root.
+agent-rootfs:
+    sudo scripts/build-agent-rootfs.sh
+
 # UFFD lazy-restore page server. Needs Linux (userfaultfd) but NOT KVM, so it
 # runs on any Linux box: `just remote-run uffd-test`.
 uffd-test:
@@ -137,9 +141,9 @@ bench-restore:
 e2e:
     @echo "not implemented yet (fleet scenario)" && exit 1
 
-# Agent demo: a coding agent survives migration mid-session, O6.
-demo-agent:
-    @echo "not implemented yet (agent demo)" && exit 1
+# Start a coding agent in a VM (it survives migration mid-session, O6).
+start-agent:
+    scripts/start-agent.sh
 
 # Live-migration demo (reads .env): a stateful in-RAM app survives an A->B move.
 # prepare = fresh VM; long-process (terminal 1) = client load; status (terminal 2,

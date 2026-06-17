@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use proto::{HostId, VmId};
+use proto::{GUEST_VSOCK_PORT, HostId, VmId};
+
+use crate::guestlink::GuestLink;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
@@ -205,6 +207,21 @@ impl VmRegistry {
         }
         fc.boot().await?;
 
+        // Deliver boot secrets to an await-secrets guest (the agent profile reads
+        // its model API key from here at exec). Only when this daemon carries a key
+        // in its env — the synthetic profile starts its child at boot and takes no
+        // boot handshake (one would make its first drain look like a post-restore
+        // resume). vsock is live pre-snapshot, so this is reliable here.
+        if let Some(env) = boot_secrets() {
+            let link =
+                GuestLink::connect_retry(&vsock_uds, GUEST_VSOCK_PORT, Duration::from_secs(15))
+                    .await
+                    .map_err(|e| io("connect guest for boot secrets", e))?;
+            link.handshake(env)
+                .await
+                .map_err(|e| io("deliver boot secrets", e))?;
+        }
+
         let ip = vm_ip(&net).to_owned();
         self.vms.lock().await.insert(
             id,
@@ -266,6 +283,23 @@ impl VmRegistry {
 /// The VM's address for telemetry labels, or `"none"` if it has no network.
 fn vm_ip(net: &Option<crate::net::NetId>) -> &str {
     net.as_ref().map(|n| n.ip.as_str()).unwrap_or("none")
+}
+
+/// The boot secrets to hand a guest, or `None` if this daemon carries no agent
+/// key. Reads `AGENT_API_KEY` (required) plus optional `AGENT_MODEL` /
+/// `AGENT_GAP_SECS` from the daemon's own environment — never from the rootfs
+/// image or the kernel cmdline (both host-readable). Absent key ⇒ no boot
+/// handshake, so the synthetic profile is untouched.
+fn boot_secrets() -> Option<BTreeMap<String, String>> {
+    let key = std::env::var("AGENT_API_KEY").ok().filter(|k| !k.is_empty())?;
+    let mut env = BTreeMap::new();
+    env.insert("AGENT_API_KEY".to_owned(), key);
+    for k in ["AGENT_MODEL", "AGENT_GAP_SECS"] {
+        if let Ok(v) = std::env::var(k) {
+            env.insert(k.to_owned(), v);
+        }
+    }
+    Some(env)
 }
 
 fn io(context: &str, source: std::io::Error) -> MigrateError {

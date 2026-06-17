@@ -109,6 +109,10 @@ pub struct SourceTiming {
 /// Locate the Firecracker binary, kernel, and rootfs under the artifacts dir
 /// (`$SLEEPWALK_ARTIFACTS`, else `<repo>/images/artifacts`).
 ///
+/// `$SLEEPWALK_ROOTFS`, if set, overrides the rootfs with an explicit path — how
+/// the agent profile selects its own image without colliding with the synthetic
+/// `guestd-rootfs-*` in the same dir.
+///
 /// # Errors
 /// If the directory or any artifact is missing.
 pub fn discover_artifacts() -> Result<Artifacts, MigrateError> {
@@ -119,6 +123,15 @@ pub fn discover_artifacts() -> Result<Artifacts, MigrateError> {
             .canonicalize()
             .map_err(|e| io("resolve artifacts dir", e))?,
     };
+    // The migration boots a guestd rootfs (guestd as init) so the guest can be
+    // drained to quiescence before snapshotting. Default: the synthetic image in
+    // the artifacts dir; override with an explicit path for the agent profile.
+    let rootfs = match std::env::var("SLEEPWALK_ROOTFS") {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => find(&dir, |n| n.starts_with("guestd-rootfs")).ok_or(
+            MigrateError::MissingArtifact("guestd rootfs (run `just guest-rootfs`)"),
+        )?,
+    };
     Ok(Artifacts {
         fc_bin: find(&dir, |n| {
             n.starts_with("firecracker-") && !n.ends_with(".debug") && !n.ends_with(".tgz")
@@ -126,11 +139,7 @@ pub fn discover_artifacts() -> Result<Artifacts, MigrateError> {
         .ok_or(MigrateError::MissingArtifact("firecracker binary"))?,
         kernel: find(&dir, |n| n.starts_with("vmlinux"))
             .ok_or(MigrateError::MissingArtifact("kernel"))?,
-        // The migration boots the guestd rootfs (guestd as init) so the guest can
-        // be drained to quiescence over vsock before snapshotting.
-        rootfs: find(&dir, |n| n.starts_with("guestd-rootfs")).ok_or(
-            MigrateError::MissingArtifact("guestd rootfs (run `just guest-rootfs`)"),
-        )?,
+        rootfs,
     })
 }
 

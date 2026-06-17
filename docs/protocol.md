@@ -32,6 +32,15 @@ wire messages below:
   between turns (no turn in flight) before snapshotting. New turns are not gated
   or queued; that is the native-mode guarantee.
 
+  **Boot secrets in wrap mode.** By default the wrapped child starts at boot, so
+  it gets no `Secrets` (those arrive on the first handshake). A workload that needs
+  a secret at exec — e.g. a coding agent's model API key — sets
+  `/etc/sleepwalk/wrap-await-secrets` (or `SLEEPWALK_WRAP_AWAIT_SECRETS`) in the
+  rootfs: guestd then **defers** the child until the first handshake delivers
+  `Secrets`, and spawns it with them in its environment. The host supplies the
+  values from its own environment (never the rootfs image or kernel cmdline). The
+  same key persists in the running process across a migration.
+
 - **Native mode (exact boundaries).** The workload (or its harness) speaks the
   vsock messages directly — `TurnStarted` / `TurnEnded` / `DrainAck` — for exact
   turn boundaries and active gating: new turns that arrive after a `DrainRequest`
