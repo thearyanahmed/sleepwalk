@@ -7,6 +7,10 @@
 # Polls once a second. Ctrl-C to stop.
 
 source "$(dirname "$0")/ensure-env.sh"
+# This is a watch loop that must survive the app/VM going unreachable mid-migration
+# (curl exits 28). lib.sh sets `set -e`, which would kill the loop on the first
+# failed `var=$(curl ...)`; turn it off so the DOWN/`?` fallbacks below can run.
+set +e
 
 count_vms() { curl -s -m3 "http://$1:8080/status" 2>/dev/null | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["vms"]))' 2>/dev/null; }
 field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))" 2>/dev/null; }
