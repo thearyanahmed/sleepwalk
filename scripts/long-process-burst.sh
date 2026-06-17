@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Terminal 1, variant: a *bursty* client that mimics a real workload's turn/idle
+# Terminal 1, variant: a *burst* client that mimics a real workload's turn/idle
 # rhythm instead of hammering flat-out. Each cycle it runs one "turn" — a
 # POST /busy?secs=N that stalls the single-threaded server for N seconds (the VM
 # is busy, an idle-probe times out) and bumps the counter — then sits idle for a
@@ -13,7 +13,7 @@ set +e  # tolerate the app going unreachable mid-migration (curl exits 28)
 
 URL="http://$A:$APP_PORT/busy"
 
-echo "bursty load on $URL — turns + random idle gaps (Ctrl-C to stop)"
+echo "burst load on $URL — turns + random idle gaps (Ctrl-C to stop)"
 while true; do
     busy=$((RANDOM % 4 + 3))   # 3-6s turn
     printf '\033[1;33m[%s] ▶ turn: busy %ds…\033[0m\n' "$(date +%H:%M:%S)" "$busy"
