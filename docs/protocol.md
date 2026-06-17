@@ -91,6 +91,7 @@ or a host may send in the wrong direction.
 | `Secrets` | `env` (object: string → string) | API keys / secrets injected at boot. Never in the rootfs or kernel cmdline — see Secrets below. |
 | `DrainRequest` | `deadline_ms` (int) | Gate new turns and report what's in flight. `deadline_ms` is how long the host will wait for an in-flight turn before aborting the migration. |
 | `DrainCancel` | — | Migration aborted; un-gate and release any queued turns. |
+| `RunTurn` | `turn_id` (int) | Drive one unit of guest work; the guest echoes the matching `TurnStarted` / `TurnEnded` with the same `turn_id`. Subject to the drain gate exactly like a self-driven turn. |
 | `Ping` / `Pong` | — | Liveness. |
 
 ### Field encodings

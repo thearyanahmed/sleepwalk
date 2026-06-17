@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the ext4 rootfs for the AGENT profile: a full Ubuntu userland with an
 # open-source coding agent (aider) preinstalled, with the static guestd as init
-# (PID 1) in wrap mode. guestd supervises the turn-driver (images/agent/agent-turns.sh),
-# infers turn boundaries from its stdout markers, and — because this profile sets
+# (PID 1) in wrap mode. guestd supervises the HTTP turn server
+# (images/agent/agent-serve.py — one POST /ask = one turn), infers turn boundaries
+# from its stdout markers, and — because this profile sets
 # /etc/sleepwalk/wrap-await-secrets — defers spawning it until the host hands over
 # the model API key via the Secrets vsock message.
 #
