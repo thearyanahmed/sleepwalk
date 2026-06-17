@@ -15,7 +15,8 @@
 #   ./scripts/migrate.sh               # move it A->B during an idle gap
 source "$(dirname "$0")/ensure-env.sh"
 
-ROOTFS="${AGENT_ROOTFS:-sleepwalk/images/artifacts/agent-rootfs-x86_64.ext4}"
+# Relative to the daemon's CWD (it runs from ~/sleepwalk — see reset_agent_daemon).
+ROOTFS="${AGENT_ROOTFS:-images/artifacts/agent-rootfs-x86_64.ext4}"
 MODEL="${AGENT_MODEL:-groq/llama-3.3-70b-versatile}"
 GAP="${AGENT_GAP_SECS:-25}"
 MIB="${AGENT_MIB:-1024}"
