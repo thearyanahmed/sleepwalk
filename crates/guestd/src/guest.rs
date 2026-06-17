@@ -328,7 +328,7 @@ mod tests {
     async fn handshake_sends_hello_and_stores_secrets() {
         let mut g = guest();
         let mut env = BTreeMap::new();
-        env.insert("ANTHROPIC_API_KEY".to_owned(), "sk-x".to_owned());
+        env.insert("AGENT_API_KEY".to_owned(), "sk-x".to_owned());
         g.chan
             .push_inbound(HostToGuest::Secrets { env: env.clone() });
 

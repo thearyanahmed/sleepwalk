@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn host_to_guest_round_trips() {
         let mut env = BTreeMap::new();
-        env.insert("ANTHROPIC_API_KEY".to_owned(), "sk-redacted".to_owned());
+        env.insert("AGENT_API_KEY".to_owned(), "sk-redacted".to_owned());
         let cases = [
             HostToGuest::Secrets { env },
             HostToGuest::DrainRequest {
