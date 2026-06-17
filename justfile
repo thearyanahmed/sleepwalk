@@ -24,6 +24,14 @@ lint:
 fmt:
     cargo fmt
 
+# Build the mdbook documentation site into docs/book (needs `cargo install mdbook`).
+book:
+    cd docs && mdbook build
+
+# Serve the docs locally with live reload at http://localhost:3000.
+book-serve:
+    cd docs && mdbook serve --open
+
 # Turn-vs-drain race-rule chaos over seeded interleavings. Deterministic, no VM —
 # the fast falsification layer for the race rule; the wall-clock KVM run is
 # `chaos-vm` (tier 2). A failure prints the seed that reproduces it.

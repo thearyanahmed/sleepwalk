@@ -28,3 +28,6 @@
 *.qcow2
 *.img
 seed.iso
+
+# mdbook build output
+docs/book/

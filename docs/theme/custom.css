@@ -1,0 +1,27 @@
+/* Lora for all prose. Code stays monospace (Lora has no monospace face). */
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap');
+
+html,
+body,
+.menu-title,
+.sidebar,
+.chapter,
+.content,
+h1, h2, h3, h4, h5, h6,
+p, li, td, th, dt, dd,
+a, button, input, label, blockquote, figcaption {
+    font-family: "Lora", Georgia, "Times New Roman", serif !important;
+}
+
+/* Keep code, pre, and keyboard text monospace so it stays aligned. */
+code, pre, kbd, samp, tt, .hljs {
+    font-family: var(--mono-font, "Source Code Pro", Consolas, "Liberation Mono", monospace) !important;
+}
+
+/* Lora 700 reads heavy — soften emphasis and headings. */
+strong, b, th {
+    font-weight: 600 !important;
+}
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600 !important;
+}

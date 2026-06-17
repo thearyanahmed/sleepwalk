@@ -1,0 +1,21 @@
+[book]
+title = "sleepwalk"
+description = "Zero-perceived-downtime rebalancing for Firecracker microVMs"
+authors = ["Aryan Ahmed Anik"]
+src = "src"
+language = "en"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/thearyanahmed/sleepwalk"
+edit-url-template = "https://github.com/thearyanahmed/sleepwalk/edit/master/docs/{path}"
+no-section-label = false
+additional-css = ["theme/custom.css"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
