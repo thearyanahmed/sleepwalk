@@ -10,6 +10,10 @@
 # is present in this rootfs). It is never baked into the image.
 set -u
 
+# guestd (PID 1) execs us with a near-empty environment — no PATH/HOME — so set
+# them before running aider (its imports and git read both).
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+export HOME="${HOME:-/root}"
 export GROQ_API_KEY="${AGENT_API_KEY:-}"
 MODEL="${AGENT_MODEL:-groq/llama-3.3-70b-versatile}"
 GAP="${AGENT_GAP_SECS:-20}"
@@ -34,7 +38,7 @@ aider_step() { # prompt
     aider --model "$MODEL" \
           --yes --no-auto-commits --no-stream --no-pretty \
           --no-check-update --no-show-model-warnings --no-gitignore \
-          --message "$1" calc.py test_calc.py 2>&1 | sed 's/^/[aider] /'
+          --message "$1" calc.py test_calc.py 2>&1 | sed -u 's/^/[aider] /'
 }
 
 turn=0
@@ -49,8 +53,8 @@ for p in "${PROMPTS[@]}"; do
 done
 
 echo "[agent] task complete: $turn turns; final tree:"
-git -C "$REPO" status --porcelain | sed 's/^/[agent] /'
+git -C "$REPO" status --porcelain | sed -u 's/^/[agent] /'
 # Verify the work actually runs (zero-errors check for O6).
 if command -v pytest >/dev/null 2>&1 && [[ -f "$REPO/test_calc.py" ]]; then
-    ( cd "$REPO" && python3 -m pytest -q 2>&1 | sed 's/^/[agent] /' ) || true
+    ( cd "$REPO" && python3 -m pytest -q 2>&1 | sed -u 's/^/[agent] /' ) || true
 fi
