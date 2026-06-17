@@ -65,6 +65,14 @@ wait_healthz() { # ip
 ensure_net() { # label up-arg local-ip remote-ip
     sh_host "$1" "cd sleepwalk; sudo scripts/net-host.sh up $2 >/dev/null 2>&1; sudo scripts/net-host.sh vxlan $3 $4 >/dev/null 2>&1; true" >/dev/null || true
 }
+ensure_dnat() { # label  — host APP_PORT -> guest :8000 so you can curl the agent
+    sh_host "$1" "
+        sudo iptables -t nat -N SW_DNAT 2>/dev/null || true
+        sudo iptables -t nat -C PREROUTING -p tcp --dport $APP_PORT -j SW_DNAT 2>/dev/null || sudo iptables -t nat -A PREROUTING -p tcp --dport $APP_PORT -j SW_DNAT
+        sudo iptables -t nat -C POSTROUTING -d 10.200.0.0/24 -p tcp --dport 8000 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -d 10.200.0.0/24 -p tcp --dport 8000 -j MASQUERADE
+        sudo iptables -t nat -F SW_DNAT; sudo iptables -t nat -A SW_DNAT -p tcp --dport $APP_PORT -j DNAT --to-destination $GUEST_IP:8000
+        true" >/dev/null || true
+}
 
 if [[ "${1:-}" == "watch" ]]; then watch_logs; exit 0; fi
 
@@ -75,14 +83,21 @@ wait_healthz "$A"
 wait_healthz "$B"
 ensure_net a "10.200.0.1/24" "$A" "$B"
 ensure_net b "none" "$B" "$A"
+ensure_dnat a
+ensure_dnat b
 sleep 2
 
 _log "spawning agent VM on A (${MIB}MiB) — guestd waits for the key, then starts aider"
 vm=$(curl -s -m60 -X POST "http://$A:8080/vms/spawn?mib=$MIB&net=1" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("vm",""))' 2>/dev/null)
 [[ -n "$vm" ]] || _die "spawn failed (check /tmp/hostd.log on A; did the rootfs build + key deliver?)"
-_log "vm $vm spawned. Now:"
+_log "vm $vm spawned — waiting for the agent HTTP on http://$A:$APP_PORT"
+for _ in $(seq 1 30); do
+    [[ -n "$(curl -s -m3 "http://$A:$APP_PORT/" 2>/dev/null)" ]] && { _log "agent ready."; break; }
+    sleep 2
+done
 echo
-echo "  terminal 1:  ./scripts/start-agent.sh watch    (live agent log)"
-echo "  terminal 2:  ./scripts/migrate.sh              (move A->B during an idle gap)"
+echo "  terminal 1:  ./scripts/talk-agent.sh           (you drive the agent — one prompt = one turn)"
+echo "  terminal 2:  ./scripts/agent-status.sh         (live: which host holds the VM + turn count)"
+echo "  terminal 3:  ./scripts/migrate.sh              (move A<->B; lands only between your prompts)"
 echo
-_log "watch for @@TURN_START@@/@@TURN_END@@; migrate between them; the task completes on B."
+_log "type a prompt in terminal 1, then migrate in terminal 3 while you're thinking — the agent keeps going on the other host."

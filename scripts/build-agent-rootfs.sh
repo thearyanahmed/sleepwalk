@@ -25,8 +25,9 @@ case "$ARCH" in
     *) _die "unsupported arch $ARCH" ;;
 esac
 TARGET="${ARCH}-unknown-linux-musl"
-UB_REL="24.04"
-UB_TAR="ubuntu-base-${UB_REL}-base-${UB_ARCH}.tar.gz"
+UB_REL="24.04"                        # release series (the cdimage directory)
+UB_POINT="24.04.4"                     # pinned point release (the tarball name)
+UB_TAR="ubuntu-base-${UB_POINT}-base-${UB_ARCH}.tar.gz"
 UB_URL="https://cdimage.ubuntu.com/ubuntu-base/releases/${UB_REL}/release/${UB_TAR}"
 AIDER_PKG="aider-chat"                # pin (==X.Y.Z) once a known-good version is chosen
 OUT="$SLEEPWALK_ROOT/images/artifacts"
@@ -91,11 +92,14 @@ _log "installing init, driver, wrap config, and seed repo"
 cp "$BIN" "$ROOT/init"            # kernel execs /init as PID 1 (init=/init)
 chmod +x "$ROOT/init"
 mkdir -p "$ROOT/etc/sleepwalk" "$ROOT/usr/local/bin" "$ROOT/root/task"
-cp "$SLEEPWALK_ROOT/images/agent/agent-turns.sh" "$ROOT/usr/local/bin/agent-turns"
-chmod +x "$ROOT/usr/local/bin/agent-turns"
+cp "$SLEEPWALK_ROOT/images/agent/agent-serve.py" "$ROOT/usr/local/bin/agent-serve.py"
+chmod +x "$ROOT/usr/local/bin/agent-serve.py"
 cp "$SLEEPWALK_ROOT/images/agent/seed/"* "$ROOT/root/task/"
-# guestd (init) execs this; argv is split on whitespace, so a single path works.
-printf '/usr/local/bin/agent-turns\n' > "$ROOT/etc/sleepwalk/wrap-cmd"
+# guestd (init) execs this; argv is split on whitespace. stdbuf forces line-
+# buffered stdout so the turn markers reach guestd promptly (a pipe is fully
+# buffered otherwise, and guestd would never see the boundaries). The agent serves
+# HTTP on :8000 — one POST /ask = one turn — so turns are driven on demand.
+printf 'stdbuf -oL -eL python3 /usr/local/bin/agent-serve.py\n' > "$ROOT/etc/sleepwalk/wrap-cmd"
 # Defer the child until Secrets arrive (the agent needs the API key at exec).
 : > "$ROOT/etc/sleepwalk/wrap-await-secrets"
 # Seed the git repo so aider has a working tree from the first turn.

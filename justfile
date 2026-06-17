@@ -144,6 +144,12 @@ e2e:
 # Start a coding agent in a VM (it survives migration mid-session, O6).
 start-agent:
     scripts/start-agent.sh
+# Drive the agent yourself — one prompt = one turn (terminal 1).
+talk-agent:
+    scripts/talk-agent.sh
+# Live agent status: which host holds the VM + turns served (terminal 2).
+agent-status:
+    scripts/agent-status.sh
 
 # Live-migration demo (reads .env): a stateful in-RAM app survives an A->B move.
 # prepare = fresh VM; long-process (terminal 1) = client load; status (terminal 2,
