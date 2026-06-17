@@ -150,6 +150,9 @@ talk-agent:
 # Live agent status: which host holds the VM + turns served (terminal 2).
 agent-status:
     scripts/agent-status.sh
+# Auto-migrate at the next idle gap (waits out in-flight turns).
+migrate-when-idle:
+    scripts/migrate-when-idle.sh
 
 # Live-migration demo (reads .env): a stateful in-RAM app survives an A->B move.
 # prepare = fresh VM; long-process (terminal 1) = client load; status (terminal 2,
