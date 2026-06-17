@@ -11,6 +11,7 @@
 //! retried whole); the snapshot is still on the source until cutover.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crc32fast::Hasher;
 use thiserror::Error;
@@ -160,16 +161,32 @@ pub async fn send_snapshot(addr: &str, files: &[OutboundFile]) -> Result<(), Tra
     Ok(())
 }
 
+/// How long a receiver waits for the sender to connect before giving up. A live
+/// migration connects within a snapshot's time; a sender that stood down (drain
+/// found the guest busy) never connects, so this bounds how long the receiver
+/// holds its port — without it, a stood-down migration leaks the listener and the
+/// next attempt can't bind (`Address already in use`).
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Accept one connection on `listener` and receive a snapshot into `dest_dir`,
 /// verifying each file's CRC. Returns the written paths.
 ///
 /// # Errors
-/// If accepting, receiving, or a checksum check fails.
+/// If no sender connects within [`ACCEPT_TIMEOUT`], or accepting, receiving, or a
+/// checksum check fails.
 pub async fn recv_snapshot(
     listener: &TcpListener,
     dest_dir: &Path,
 ) -> Result<Vec<PathBuf>, TransferError> {
-    let (mut stream, _) = listener.accept().await.map_err(io)?;
+    let (mut stream, _) = match tokio::time::timeout(ACCEPT_TIMEOUT, listener.accept()).await {
+        Ok(accepted) => accepted.map_err(io)?,
+        Err(_) => {
+            return Err(io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "no sender connected before timeout",
+            )));
+        }
+    };
     recv_files(&mut stream, dest_dir).await
 }
 
