@@ -512,10 +512,10 @@ async fn receive_and_restore(
     // Announce the VM's new location so every host on the overlay relearns its
     // MAC immediately — without this the source bridge floods/ages for seconds
     // before discovering the VM moved across the tunnel. Best-effort.
-    if let Some(net) = &net {
-        if let Err(e) = crate::net::announce(net) {
-            eprintln!("hostd: gratuitous ARP for {}: {e}", net.ip);
-        }
+    if let Some(net) = &net
+        && let Err(e) = crate::net::announce(net)
+    {
+        eprintln!("hostd: gratuitous ARP for {}: {e}", net.ip);
     }
 
     // The source's vsock uds path, carried over for completeness. Note vsock is
