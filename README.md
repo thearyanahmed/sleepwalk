@@ -174,6 +174,49 @@ collision from leftover VM state during a stall) — the migrations' snapshot +
 transfer still succeeded each time, only the client's post-move reachability was
 affected. A production driver (GARP + a clean per-run target) removes that noise.*
 
+## Live coding-agent migration (interactive, observed)
+
+The continuity benchmarks above move a synthetic in-RAM counter. This moves a
+**workload that does externally-visible work**: a coding agent
+([aider](https://aider.chat/), driven against a hosted model endpoint) running
+inside the microVM, editing a source tree turn-by-turn while a human drives it
+over HTTP — and the VM is migrated to the other host *mid-session, between turns*.
+
+Setup: the agent rootfs runs an HTTP server where one `POST /ask` = one agent
+turn (the model call + the file edits it makes). The model API key is handed to
+the guest at boot over the Secrets vsock message — never in the image, argv, or a
+committed file. A host port is DNAT'd to the guest so you drive it from a laptop.
+The mechanics: `./scripts/start-agent.sh` boots it on A; `./scripts/talk-agent.sh`
+sends a turn; `./scripts/agent-status.sh` shows which host holds the VM + the turn
+count; `./scripts/migrate-when-idle.sh` waits for an idle gap and moves it.
+
+**Idle-gap detection with no protocol change.** The agent's HTTP server is
+single-threaded, so while it runs a turn it cannot answer a probe. The migrator
+does a fast `GET /`: an answer means idle → migrate; a timeout means mid-turn →
+wait. So a move is only attempted between turns, and a receiver is never orphaned
+by a stood-down send.
+
+Observed on a single interactive move (1024 MB guest, two DigitalOcean droplets,
+public internet):
+
+| source cost (one observed move) | value |
+|---------------------------------|------:|
+| snapshot                        | 4.42 s |
+| transfer (1 GiB)                | 4.23 s |
+| freeze ≈ snapshot + transfer    | ≈ 8.6 s |
+
+The in-process turn counter and the agent's working tree carried across the move;
+the agent answered its next turn — including a fresh model call — on the new host,
+with no session reset. A migration fired *mid-turn* stands down (the gate holds)
+and leaves the VM running on the source. The freeze scales with **guest RAM** (the
+whole gig ships), not with what the agent is doing — the same diff-snapshot /
+post-copy levers in [Limitations](#limitations) apply, and matter more here
+because the guest is larger.
+
+This is a single observed run, not a 20-cycle benchmark — it demonstrates
+continuity of a stateful, side-effecting workload across a live host move, not a
+steady-state freeze distribution.
+
 ## Limitations
 
 - **Linux + KVM, x86_64** for the VM-facing paths. The host-agnostic logic builds
@@ -212,6 +255,9 @@ affected. A production driver (GARP + a clean per-run target) removes that noise
   through the freeze.
 - **20/20** cross-node migrations; **~1.4 s mean source cost** for a 256 MB guest
   over the public internet.
+- A **live coding agent** (aider against a hosted model) **migrated host-to-host
+  mid-session, between turns** — its turn state and working tree rode the
+  snapshot and it answered the next turn, with a fresh model call, on the new host.
 
 ## Pros & cons
 
