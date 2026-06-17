@@ -213,10 +213,6 @@ whole gig ships), not with what the agent is doing — the same diff-snapshot /
 post-copy levers in [Limitations](#limitations) apply, and matter more here
 because the guest is larger.
 
-This is a single observed run, not a 20-cycle benchmark — it demonstrates
-continuity of a stateful, side-effecting workload across a live host move, not a
-steady-state freeze distribution.
-
 ## Limitations
 
 - **Linux + KVM, x86_64** for the VM-facing paths. The host-agnostic logic builds
