@@ -41,7 +41,10 @@ impl State {
 
 /// Handle a request, mutating state, and return `(status, json_body)`.
 ///
-/// Routes: `POST /inc` bumps the counter; `GET /state` (or `GET /`) reports it.
+/// Routes: `POST /inc` bumps the counter; `POST /busy` bumps it too but is meant
+/// to be served *after* a deliberate stall (see [`busy_secs`] and `main.rs`), so
+/// the single-threaded server looks busy to a probe; `GET /state` (or `GET /`)
+/// reports the state. This function is pure — the stall itself lives in `main.rs`.
 pub fn handle(state: &State, method: &str, path: &str) -> (u16, String) {
     state.requests.fetch_add(1, Ordering::Relaxed);
     let path = path.split('?').next().unwrap_or(path);
@@ -51,9 +54,27 @@ pub fn handle(state: &State, method: &str, path: &str) -> (u16, String) {
             push_log(state, format!("inc -> {n}"));
             (200, compact_json(state)) // just the new value, not the whole log
         }
+        ("POST", "/busy") => {
+            let n = state.counter.fetch_add(1, Ordering::Relaxed) + 1;
+            push_log(state, format!("busy -> {n}"));
+            (200, compact_json(state))
+        }
         ("GET", "/state" | "/") => (200, state_json(state)),
         _ => (404, "{\"error\":\"not found\"}".to_owned()),
     }
+}
+
+/// Parse `?secs=N` out of a `/busy` request path, clamped to a sane 1-30s. The
+/// caller (`main.rs`) sleeps this long *before* handling the request, occupying
+/// the single-threaded accept loop so an idle-probe times out — which is how
+/// `migrate-when-idle` tells a turn-in-progress from a gap. `None` if no `secs`.
+#[must_use]
+pub fn busy_secs(path: &str) -> Option<u64> {
+    let query = path.split('?').nth(1)?;
+    query.split('&').find_map(|kv| {
+        let v = kv.strip_prefix("secs=")?;
+        v.parse::<u64>().ok().map(|n| n.clamp(1, 30))
+    })
 }
 
 /// A compact one-line view: boot id + counter, no log. The `/inc` response, so a
@@ -134,6 +155,25 @@ mod tests {
         assert_eq!(code, 200);
         assert!(body.contains("\"counter\":1"), "{body}");
         assert!(body.contains("\"recent\":[\"inc -> 1\"]"), "{body}");
+    }
+
+    #[test]
+    fn busy_bumps_counter_like_inc() {
+        let s = State::new(7);
+        let (code, body) = handle(&s, "POST", "/busy?secs=3");
+        assert_eq!(code, 200);
+        assert!(body.contains("\"counter\":1"), "{body}");
+        assert!(body.contains("\"boot_id\":7"), "{body}");
+    }
+
+    #[test]
+    fn busy_secs_parses_and_clamps() {
+        assert_eq!(busy_secs("/busy?secs=5"), Some(5));
+        assert_eq!(busy_secs("/busy?secs=999"), Some(30)); // clamped
+        assert_eq!(busy_secs("/busy?secs=0"), Some(1)); // clamped
+        assert_eq!(busy_secs("/busy?x=1&secs=4"), Some(4));
+        assert_eq!(busy_secs("/busy"), None);
+        assert_eq!(busy_secs("/busy?secs=nope"), None);
     }
 
     #[test]

@@ -7,9 +7,10 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread::sleep;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ramstate::{State, handle, parse_request_line};
+use ramstate::{State, busy_secs, handle, parse_request_line};
 
 fn main() {
     let port: u16 = std::env::var("PORT")
@@ -46,7 +47,18 @@ fn main() {
         let req = String::from_utf8_lossy(&buf[..n]);
         let first = req.lines().next().unwrap_or("");
         let (status, body) = match parse_request_line(first) {
-            Some((method, path)) => handle(&state, &method, &path),
+            Some((method, path)) => {
+                // POST /busy?secs=N stalls the single-threaded loop for N seconds
+                // before replying, so a concurrent idle-probe times out and
+                // migrate-when-idle treats it as a turn-in-progress, not a gap.
+                if method == "POST"
+                    && path.split('?').next() == Some("/busy")
+                    && let Some(secs) = busy_secs(&path)
+                {
+                    sleep(Duration::from_secs(secs));
+                }
+                handle(&state, &method, &path)
+            }
             None => (400, "{\"error\":\"bad request\"}".to_owned()),
         };
         let reason = match status {
